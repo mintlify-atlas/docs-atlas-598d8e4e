@@ -1,0 +1,343 @@
+---
+title: Telegram Channel
+description: Set up and configure Telegram bot for Corvus agent
+---
+
+The Telegram channel allows your Corvus agent to interact with users via Telegram bots using the Telegram Bot API.
+
+## Features
+
+- Long-polling for real-time message delivery
+- Typing indicators during processing
+- Progressive message updates (streaming mode)
+- Username and user ID allowlist
+- Pairing code for self-service binding
+- Media attachment support
+- Forum/topic support
+- Message splitting for long responses (4096 char limit)
+
+## Bot Setup with BotFather
+
+### 1. Create Your Bot
+
+1. Open Telegram and search for `@BotFather`
+2. Send `/newbot` command
+3. Follow the prompts:
+   - Enter a name for your bot (e.g., "Corvus Assistant")
+   - Enter a username ending in `bot` (e.g., "corvus_ai_bot")
+4. BotFather will respond with your bot token:
+   ```
+   Use this token to access the HTTP API:
+   123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+   ```
+
+### 2. Configure Bot Settings
+
+Optional but recommended:
+
+- **Privacy Mode**: Send `/setprivacy` to BotFather, select your bot, and choose `Disable` (allows bot to see all messages in groups)
+- **About Text**: Send `/setabouttext` to set a description
+- **Profile Picture**: Send `/setuserpic` to upload an avatar
+
+### 3. Get Your Telegram User ID
+
+You need your user ID for the allowlist:
+
+1. Search for `@userinfobot` in Telegram
+2. Send any message - it will reply with your user ID
+3. Note the numeric ID (e.g., `123456789`)
+
+## Configuration
+
+Add Telegram configuration to `~/.corvus/config.toml`:
+
+```toml
+[channels_config.telegram]
+bot_token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+allowed_users = ["alice", "bob", "123456789"]
+stream_mode = "full"
+draft_update_interval_ms = 1000
+```
+
+### Configuration Options
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `bot_token` | String | Yes | Bot token from BotFather |
+| `allowed_users` | Array | Yes | List of allowed usernames or user IDs |
+| `stream_mode` | String | No | Streaming mode: `"off"` or `"full"` (default: `"off"`) |
+| `draft_update_interval_ms` | Integer | No | Throttle interval for draft edits in ms (default: 1000) |
+
+### Streaming Mode
+
+- **`"off"`** - Send complete response as a single message
+- **`"full"`** - Send draft message and progressively update as the LLM generates text
+
+## Allowlist Patterns
+
+### Username Format
+
+Usernames are normalized by removing the leading `@` symbol:
+
+```toml
+allowed_users = ["alice", "bob"]  # Both "alice" and "@alice" match
+```
+
+### Numeric User ID
+
+More secure than usernames (users can change usernames):
+
+```toml
+allowed_users = ["123456789", "987654321"]
+```
+
+### Mixed Allowlist
+
+You can combine usernames and user IDs:
+
+```toml
+allowed_users = ["alice", "123456789", "bob"]
+```
+
+### Wildcard (Allow All)
+
+**Not recommended for production:**
+
+```toml
+allowed_users = ["*"]
+```
+
+## Pairing Flow
+
+If `allowed_users` is empty, Corvus automatically enables pairing mode.
+
+### Operator-Side Setup
+
+1. Start Corvus with empty allowlist:
+   ```bash
+   corvus channel start
+   ```
+
+2. Corvus outputs a one-time pairing code:
+   ```
+   🔐 Telegram pairing required. One-time bind code: A1B2C3
+      Send `/bind <code>` from your Telegram account.
+   ```
+
+### User-Side Binding
+
+1. User sends to the bot:
+   ```
+   /bind A1B2C3
+   ```
+
+2. Bot responds:
+   ```
+   ✅ Telegram account bound successfully. You can talk to Corvus now.
+   ```
+
+3. User's identity is added to `allowed_users` in config and persisted.
+
+### Manual Binding
+
+Operator can bind users manually from CLI:
+
+```bash
+corvus channel bind-telegram alice
+```
+
+Or with user ID:
+
+```bash
+corvus channel bind-telegram 123456789
+```
+
+## Testing and Verification
+
+### 1. Start Channel Listener
+
+```bash
+corvus channel start
+```
+
+Output should show:
+```
+💬 Starting channels...
+  ✅ Telegram connected
+```
+
+### 2. Health Check
+
+Verify bot authentication:
+
+```bash
+corvus channel doctor
+```
+
+Expected output:
+```
+🩺 Corvus Channel Doctor
+
+  ✅ Telegram  healthy
+```
+
+### 3. Send Test Message
+
+1. Open Telegram and search for your bot username
+2. Send `/start` or any message
+3. If you're in the allowlist, the bot should respond via the LLM
+4. If not allowlisted, you'll see:
+   ```
+   🔐 This bot requires operator approval.
+
+   Copy this command to operator terminal:
+   `corvus channel bind-telegram alice`
+
+   After operator runs it, send your message again.
+   ```
+
+## Advanced Features
+
+### Forum/Topic Support
+
+Telegram forums (topics) are automatically supported. The `reply_target` format is:
+
+```
+{chat_id}:{message_thread_id}
+```
+
+The bot replies to the correct topic thread.
+
+### Media Attachments
+
+The agent can send media by including markers in responses:
+
+- `[IMAGE:<path-or-url>]` - Send as photo
+- `[DOCUMENT:<path-or-url>]` - Send as document
+- `[VIDEO:<path-or-url>]` - Send as video
+- `[AUDIO:<path-or-url>]` - Send as audio
+- `[VOICE:<path-or-url>]` - Send as voice message
+
+Example response from LLM:
+
+```
+Here's the chart you requested:
+
+[IMAGE:/tmp/chart.png]
+
+And the data file:
+
+[DOCUMENT:/tmp/data.csv]
+```
+
+Corvus automatically parses markers and sends media via `sendPhoto`, `sendDocument`, etc.
+
+### Message Splitting
+
+Telegram has a 4096 character limit. Long messages are automatically split at word boundaries:
+
+```
+First chunk...
+
+(continues...)
+```
+
+```
+(continued)
+
+Second chunk...
+
+(continues...)
+```
+
+```
+(continued)
+
+Final chunk.
+```
+
+### Markdown Formatting
+
+Telegram supports Markdown in messages. The agent can use:
+
+- `*bold*` - **bold text**
+- `_italic_` - *italic text*
+- `[link](url)` - hyperlinks
+- `` `code` `` - inline code
+- ``` - code blocks
+
+If Markdown parsing fails, Corvus automatically retries with plain text.
+
+## Troubleshooting
+
+### Bot Not Responding
+
+1. Check allowlist:
+   ```bash
+   corvus channel list
+   ```
+
+2. Verify user is allowlisted:
+   ```bash
+   grep allowed_users ~/.corvus/config.toml
+   ```
+
+3. Check logs for authorization warnings:
+   ```
+   Telegram: ignoring message from unauthorized user: username=alice, user_id=Some("123456789"). 
+   Allowlist Telegram username (without '@') or numeric user ID.
+   ```
+
+### 409 Conflict Error
+
+```
+Telegram polling conflict (409): Conflict: terminated by other getUpdates request
+```
+
+**Cause**: Another process is using the same bot token.
+
+**Solution**: Ensure only one `corvus` instance is running:
+
+```bash
+pkill -f "corvus channel start"
+corvus channel start
+```
+
+### Invalid Bot Token
+
+```
+Telegram API error (401): Unauthorized
+```
+
+**Cause**: Bot token is incorrect.
+
+**Solution**: Verify token with BotFather:
+
+1. Send `/token` to `@BotFather`
+2. Select your bot
+3. Copy the token and update `config.toml`
+
+### Rate Limiting
+
+Telegram enforces rate limits:
+
+- 30 messages per second to different users
+- 1 message per second to the same user
+- 20 edit operations per minute
+
+Corvus automatically throttles draft updates with `draft_update_interval_ms`.
+
+## Security Best Practices
+
+1. **Use User IDs**: Prefer numeric user IDs over usernames (usernames can be changed)
+2. **Never Share Token**: Keep `bot_token` secret - it grants full bot access
+3. **Empty Allowlist by Default**: Start with `allowed_users = []` and explicitly add users
+4. **Monitor Logs**: Watch for unauthorized access attempts
+5. **Rotate Tokens**: Regenerate token via BotFather if compromised
+
+## Reference
+
+- Source: `clients/agent-runtime/src/channels/telegram.rs`
+- Telegram Bot API: https://core.telegram.org/bots/api
+- BotFather: https://t.me/BotFather
+- Line range: `telegram.rs:1-1628`

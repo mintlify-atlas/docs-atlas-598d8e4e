@@ -1,0 +1,92 @@
+---
+title: 'corvus daemon'
+description: 'Start long-running autonomous runtime'
+---
+
+# corvus daemon
+
+Start the full autonomous runtime with gateway, channels, heartbeat, and scheduler.
+
+## Usage
+
+```bash
+corvus daemon [OPTIONS]
+```
+
+## What It Runs
+
+The daemon starts:
+
+1. **Gateway** — Webhook server for HTTP integrations
+2. **Channels** — All configured messaging platforms (Telegram, Discord, Slack)
+3. **Heartbeat** — Periodic tasks from `HEARTBEAT.md`
+4. **Scheduler** — Cron jobs and timed tasks
+
+## Options
+
+<ParamField path="-p, --port" type="u16">
+  Port for gateway. Use `0` for random available port.
+</ParamField>
+
+<ParamField path="--host" type="string" default="127.0.0.1">
+  Host for gateway. Defaults to config `gateway.host`.
+</ParamField>
+
+## Example
+
+```bash
+corvus daemon
+```
+
+Output:
+
+```
+🧠 Starting Corvus Daemon on 127.0.0.1:8080
+✅ Gateway started
+✅ Telegram channel connected
+✅ Discord channel connected
+✅ Heartbeat enabled (every 30min)
+✅ Scheduler started (3 tasks)
+
+🚀 Corvus Daemon running
+```
+
+## Running as Service
+
+For production, install as a system service:
+
+```bash
+corvus service install
+corvus service start
+```
+
+See [Service Command](/api/cli/commands#service) for details.
+
+## Logs
+
+Daemon logs to:
+
+- **stdout** — Info level
+- **stderr** — Errors and warnings
+
+Control log level with `RUST_LOG`:
+
+```bash
+RUST_LOG=debug corvus daemon
+```
+
+## Health Monitoring
+
+```bash
+# Check daemon status
+corvus doctor
+
+# Check channels
+corvus channel doctor
+```
+
+## Related
+
+- [CLI Commands](/api/cli/commands)
+- [Agent Command](/api/cli/agent)
+- [Gateway Command](/api/cli/gateway)

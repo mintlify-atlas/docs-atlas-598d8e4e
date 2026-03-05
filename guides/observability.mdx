@@ -1,0 +1,485 @@
+---
+title: Observability
+description: Logging, metrics, and OpenTelemetry support for monitoring Corvus
+---
+
+## Observer Trait
+
+Corvus uses the **Observer trait** for pluggable observability backends. All agent events flow through observers:
+
+```rust
+pub trait Observer: Send + Sync {
+    fn observe(&self, event: ObserverEvent);
+    fn name(&self) -> &str;
+}
+```
+
+**Supported backends:**
+- **Log** — Structured logging to stdout/stderr
+- **Prometheus** — Metrics for Prometheus scraping
+- **OpenTelemetry** — OTLP traces and metrics
+- **Noop** — No-op observer (disabled)
+- **Multi** — Combine multiple observers
+
+## Configuration
+
+### Basic Setup
+
+```toml
+[observability]
+backend = "log"  # "log", "prometheus", "otel", "noop"
+```
+
+### Logging
+
+**Structured logging to stdout:**
+```toml
+[observability]
+backend = "log"
+```
+
+**Set log level:**
+```bash
+export RUST_LOG=info  # trace, debug, info, warn, error
+corvus daemon
+```
+
+**Filter by module:**
+```bash
+export RUST_LOG=corvus::agent=debug,corvus::gateway=info
+corvus daemon
+```
+
+**Example output:**
+```
+2025-03-05T10:30:00Z INFO  corvus::daemon: Starting daemon
+2025-03-05T10:30:01Z INFO  corvus::gateway: Gateway listening on 127.0.0.1:8080
+2025-03-05T10:30:02Z DEBUG corvus::agent: Tool executed: file_read {path="src/main.rs"}
+```
+
+### Prometheus Metrics
+
+**Enable Prometheus backend:**
+```toml
+[observability]
+backend = "prometheus"
+```
+
+**Expose metrics endpoint:**
+```bash
+corvus gateway --metrics-port 9090
+```
+
+**Scrape metrics:**
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'corvus'
+    static_configs:
+      - targets: ['127.0.0.1:9090']
+```
+
+**Available metrics:**
+- `corvus_tool_executions_total` — Total tool executions
+- `corvus_tool_duration_seconds` — Tool execution duration
+- `corvus_provider_requests_total` — LLM API requests
+- `corvus_provider_errors_total` — LLM API errors
+- `corvus_memory_operations_total` — Memory store/recall/forget
+- `corvus_channel_messages_total` — Messages sent/received per channel
+
+**Query examples:**
+```promql
+# Tool execution rate
+rate(corvus_tool_executions_total[5m])
+
+# Average tool duration
+avg(corvus_tool_duration_seconds)
+
+# Error rate
+rate(corvus_provider_errors_total[5m]) / rate(corvus_provider_requests_total[5m])
+```
+
+### OpenTelemetry (OTLP)
+
+**Enable OpenTelemetry backend:**
+```toml
+[observability]
+backend = "otel"
+otel_endpoint = "http://localhost:4318"  # OTLP HTTP endpoint
+otel_service_name = "corvus-agent"
+```
+
+**Supported protocols:**
+- OTLP HTTP (port 4318, default)
+- OTLP gRPC (port 4317)
+
+**Example with Jaeger:**
+```bash
+# Start Jaeger all-in-one
+docker run -d \
+  --name jaeger \
+  -p 16686:16686 \
+  -p 4318:4318 \
+  jaegertracing/all-in-one:latest
+
+# Configure Corvus
+export CORVUS_OTEL_ENDPOINT=http://localhost:4318
+export CORVUS_OTEL_SERVICE_NAME=corvus-agent
+corvus daemon
+
+# View traces
+open http://localhost:16686
+```
+
+**Example with OpenTelemetry Collector:**
+```yaml
+# otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  logging:
+    loglevel: debug
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [logging, jaeger]
+    metrics:
+      receivers: [otlp]
+      exporters: [logging]
+```
+
+**Start collector:**
+```bash
+docker run -d \
+  --name otel-collector \
+  -p 4318:4318 \
+  -v $(pwd)/otel-collector-config.yaml:/etc/otel-collector-config.yaml \
+  otel/opentelemetry-collector:latest \
+  --config=/etc/otel-collector-config.yaml
+```
+
+### Multiple Observers
+
+**Combine log + prometheus:**
+```toml
+[observability]
+backend = "multi"
+observers = ["log", "prometheus"]
+```
+
+**Combine all three:**
+```toml
+[observability]
+backend = "multi"
+observers = ["log", "prometheus", "otel"]
+otel_endpoint = "http://localhost:4318"
+otel_service_name = "corvus-agent"
+```
+
+## Observer Events
+
+All agent activity generates `ObserverEvent` instances:
+
+```rust
+pub enum ObserverEvent {
+    ToolStart { name: String, params: Value },
+    ToolEnd { name: String, duration: Duration, success: bool },
+    ProviderRequest { provider: String, model: String },
+    ProviderResponse { provider: String, latency: Duration },
+    MemoryOperation { operation: String, key: String },
+    ChannelMessage { channel: String, direction: String },
+    Error { source: String, message: String },
+}
+```
+
+### Event Redaction
+
+Sensitive data is automatically redacted from observer events:
+
+- API keys
+- Bearer tokens
+- File contents (only paths logged)
+- User messages (redacted in logs, available in traces)
+
+**Example:**
+```
+# Before redaction:
+ToolStart { name: "shell", params: {"command": "git commit -m 'Add feature'", "api_key": "sk-1234"} }
+
+# After redaction:
+ToolStart { name: "shell", params: {"command": "git commit -m 'Add feature'", "api_key": "[REDACTED]"} }
+```
+
+## Logging Configuration
+
+### Environment Variables
+
+**Log level:**
+```bash
+export RUST_LOG=info
+```
+
+**Module-specific levels:**
+```bash
+export RUST_LOG=corvus::agent=debug,corvus::tools=trace,corvus::gateway=warn
+```
+
+**Structured JSON output:**
+```bash
+export RUST_LOG_FORMAT=json
+corvus daemon
+```
+
+### Log Formats
+
+**Compact (default):**
+```
+2025-03-05T10:30:00Z INFO  corvus::daemon: Starting daemon
+```
+
+**Full:**
+```
+2025-03-05T10:30:00.123456Z corvus::daemon INFO Starting daemon thread_id=123 module=corvus::daemon
+```
+
+**JSON:**
+```json
+{"timestamp":"2025-03-05T10:30:00.123456Z","level":"INFO","target":"corvus::daemon","message":"Starting daemon"}
+```
+
+## Metrics (Prometheus)
+
+### Metric Types
+
+**Counters:**
+- `corvus_tool_executions_total{tool="file_read"}`
+- `corvus_provider_requests_total{provider="openrouter"}`
+
+**Histograms:**
+- `corvus_tool_duration_seconds_bucket{tool="shell"}`
+- `corvus_provider_latency_seconds_bucket{provider="openai"}`
+
+**Gauges:**
+- `corvus_active_channels{channel="telegram"}`
+- `corvus_memory_entries_total`
+
+### Grafana Dashboard
+
+**Import dashboard:**
+```json
+{
+  "dashboard": {
+    "title": "Corvus Agent",
+    "panels": [
+      {
+        "title": "Tool Executions/min",
+        "targets": [{
+          "expr": "rate(corvus_tool_executions_total[5m]) * 60"
+        }]
+      },
+      {
+        "title": "Average Tool Duration",
+        "targets": [{
+          "expr": "avg(corvus_tool_duration_seconds)"
+        }]
+      },
+      {
+        "title": "Provider Error Rate",
+        "targets": [{
+          "expr": "rate(corvus_provider_errors_total[5m]) / rate(corvus_provider_requests_total[5m])"
+        }]
+      }
+    ]
+  }
+}
+```
+
+### Alerting Rules
+
+**`alerts.yml`:**
+```yaml
+groups:
+  - name: corvus
+    rules:
+      - alert: HighErrorRate
+        expr: rate(corvus_provider_errors_total[5m]) > 0.1
+        for: 5m
+        annotations:
+          summary: "High provider error rate detected"
+      
+      - alert: SlowToolExecution
+        expr: avg(corvus_tool_duration_seconds) > 5
+        for: 10m
+        annotations:
+          summary: "Tool execution is slow"
+```
+
+## OpenTelemetry Tracing
+
+### Trace Structure
+
+**Agent loop trace:**
+```
+Span: agent_loop (duration: 2.5s)
+  ├─ Span: provider_request (duration: 1.2s)
+  │  └─ Attributes: provider=openrouter, model=claude-sonnet-4
+  ├─ Span: tool_execution (duration: 0.8s)
+  │  ├─ Attributes: tool=file_read, path=src/main.rs
+  │  └─ Events: tool_start, tool_end
+  └─ Span: memory_operation (duration: 0.1s)
+     └─ Attributes: operation=store, key=project_context
+```
+
+### Span Attributes
+
+**Standard attributes:**
+- `service.name` — "corvus-agent"
+- `agent.autonomy_level` — "supervised"
+- `agent.workspace_dir` — "/home/user/project"
+
+**Tool attributes:**
+- `tool.name` — Tool identifier
+- `tool.duration` — Execution time
+- `tool.success` — true/false
+
+**Provider attributes:**
+- `provider.name` — Provider identifier
+- `provider.model` — Model name
+- `provider.latency` — Response time
+- `provider.tokens` — Token usage
+
+### Distributed Tracing
+
+**Propagate trace context via webhooks:**
+```bash
+curl -X POST http://127.0.0.1:8080/webhook \
+  -H "Authorization: Bearer zc_..." \
+  -H "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" \
+  -d '{"message": "Hello"}'
+```
+
+Corvus automatically propagates W3C trace context.
+
+## Health Checks
+
+### Gateway Health Endpoint
+
+```bash
+curl http://127.0.0.1:8080/health
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "uptime_seconds": 3600,
+  "version": "0.1.0"
+}
+```
+
+### System Diagnostics
+
+```bash
+# Full system health
+corvus doctor
+
+# Channel health
+corvus channel doctor
+
+# Status overview
+corvus status
+```
+
+**Output:**
+```
+✓ Config loaded from ~/.corvus/config.toml
+✓ Workspace directory: /home/user/project
+✓ Memory backend: sqlite (512 entries)
+✓ Provider: openrouter (claude-sonnet-4)
+✓ Channels: telegram (healthy), discord (healthy)
+✓ Gateway: not running
+```
+
+## Performance Monitoring
+
+### Startup Time
+
+```bash
+/usr/bin/time -l corvus status
+# < 10ms on 0.8GHz core
+```
+
+### Memory Footprint
+
+```bash
+ps aux | grep corvus
+# < 5MB base memory
+```
+
+### Tool Execution Time
+
+**Via metrics:**
+```promql
+histogram_quantile(0.95, corvus_tool_duration_seconds_bucket)
+```
+
+**Via traces:**
+- View in Jaeger UI
+- Filter by `tool.name`
+- Analyze P50/P95/P99 latencies
+
+## Troubleshooting
+
+### Enable Verbose Logging
+
+```bash
+export RUST_LOG=trace
+corvus daemon
+```
+
+### Debug Specific Modules
+
+```bash
+export RUST_LOG=corvus::tools::shell=trace
+corvus agent -m "run ls"
+```
+
+### Capture Full Traces
+
+```bash
+# Export to file
+export RUST_LOG=trace
+corvus daemon 2>&1 | tee corvus.log
+
+# Or use OTLP
+export CORVUS_OTEL_ENDPOINT=http://localhost:4318
+corvus daemon
+```
+
+## Best Practices
+
+1. **Production**: Use `backend = "otel"` with centralized collector
+2. **Development**: Use `backend = "log"` with `RUST_LOG=debug`
+3. **Monitoring**: Use `backend = "prometheus"` + Grafana dashboards
+4. **Debugging**: Use `backend = "multi"` with log + otel
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment" icon="rocket" href="/guides/deployment">
+    Production deployment guide
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/guides/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

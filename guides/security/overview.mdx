@@ -1,0 +1,194 @@
+---
+title: Security Overview
+description: Security-first architecture and defense-in-depth approach
+---
+
+## Security-First Design Philosophy
+
+Corvus enforces security at **every layer** — not just the sandbox. Security is built into the foundation, with multiple overlapping defensive mechanisms that provide defense-in-depth.
+
+### Core Security Principles
+
+1. **Secure by Default** — All security features are enabled out of the box
+2. **Deny by Default** — Explicit allowlists for commands, paths, and channels
+3. **Least Privilege** — Minimal permissions required for operation
+4. **Defense in Depth** — Multiple security layers working together
+5. **Zero Trust** — Every request is authenticated and authorized
+
+## Security Checklist
+
+Corvus passes all items from the community security checklist:
+
+| # | Item | Status | Implementation |
+|---|------|--------|----------------|
+| 1 | **Gateway not publicly exposed** | ✅ | Binds `127.0.0.1` by default. Refuses `0.0.0.0` without tunnel or explicit `allow_public_bind = true`. |
+| 2 | **Pairing required** | ✅ | 6-digit one-time code on startup. Exchange via `POST /pair` for bearer token. All `/webhook` requests require `Authorization: Bearer <token>`. |
+| 3 | **Filesystem scoped (no /)** | ✅ | `workspace_only = true` by default. 14 system dirs + 4 sensitive dotfiles blocked. Null byte injection blocked. Symlink escape detection via canonicalization + resolved-path workspace checks. |
+| 4 | **Access via tunnel only** | ✅ | Gateway refuses public bind without active tunnel. Supports Tailscale, Cloudflare, ngrok, or any custom tunnel. |
+
+<Tip>
+**Run your own security audit:** `nmap -p 1-65535 <your-host>` — Corvus binds to localhost only, so nothing is exposed unless you explicitly configure a tunnel.
+</Tip>
+
+## Multiple Security Layers
+
+Corvus implements defense-in-depth through multiple overlapping security mechanisms:
+
+### 1. Autonomy Levels
+
+Control how much the agent can do:
+
+- **ReadOnly** — Agent can only observe, no shell or write access
+- **Supervised** (default) — Agent can act within allowlists
+- **Full** — Agent has full access within workspace sandbox
+
+```toml
+[autonomy]
+level = "supervised"  # "readonly", "supervised", "full"
+```
+
+### 2. Workspace Isolation
+
+All file operations are confined to the workspace directory:
+
+```toml
+[autonomy]
+workspace_only = true  # default: true
+```
+
+- Absolute paths blocked by default
+- Path traversal sequences (`..`) rejected
+- Symlink escape detection
+- Resolved paths validated against workspace root
+
+### 3. Command Allowlisting
+
+Only explicitly approved commands can execute:
+
+```toml
+[autonomy]
+allowed_commands = ["git", "npm", "cargo", "ls", "cat", "grep"]
+```
+
+- Command injection protection (backticks, `$()`, `${}` blocked)
+- Pipe segment validation
+- Dangerous argument blocking (`find -exec`, `git config`)
+
+### 4. Forbidden Path List
+
+Critical system paths always blocked:
+
+```toml
+[autonomy]
+forbidden_paths = [
+  # System directories
+  "/etc", "/root", "/proc", "/sys", "/var", "/tmp",
+  # Sensitive dotfiles
+  "~/.ssh", "~/.gnupg", "~/.aws", "~/.config"
+]
+```
+
+### 5. Rate Limiting
+
+Protection against runaway automation:
+
+```toml
+[autonomy]
+max_actions_per_hour = 20
+max_cost_per_day_cents = 500
+```
+
+### 6. Risk-Based Execution
+
+Commands are classified by risk level:
+
+- **Low risk** — Read-only operations (`git status`, `ls`)
+- **Medium risk** — State-changing operations (`git commit`, `npm install`)
+- **High risk** — Dangerous operations (`rm`, `curl`, `sudo`)
+
+```toml
+[autonomy]
+require_approval_for_medium_risk = true
+block_high_risk_commands = true
+```
+
+## Threat Model
+
+### What Corvus Protects Against
+
+✅ **Path Traversal Attacks**
+- `../../../etc/passwd` blocked
+- Null byte injection blocked
+- URL-encoded traversal blocked
+
+✅ **Command Injection**
+- Backticks and subshells blocked
+- Pipe and chain validation
+- Dangerous arguments blocked
+
+✅ **Workspace Escape**
+- Symlink resolution and validation
+- Absolute path blocking
+- Canonicalized path checking
+
+✅ **Runaway Costs**
+- Rate limiting on actions
+- Daily cost caps
+- Sliding window tracking
+
+✅ **Unauthorized Access**
+- Gateway pairing requirement
+- Bearer token authentication
+- Channel allowlists
+
+### Out of Scope
+
+⚠️ **Model Jailbreaking** — LLM prompt injection is the model provider's responsibility
+
+⚠️ **Network-Level Attacks** — Use a firewall and tunnel for network security
+
+⚠️ **Host Compromise** — Corvus assumes the host OS is trusted
+
+## Security Testing
+
+All security mechanisms are covered by automated tests:
+
+```bash
+cargo test -- security
+cargo test -- tools::shell
+cargo test -- tools::file_read
+cargo test -- tools::file_write
+```
+
+**Test Coverage:**
+- 129+ security-specific tests
+- Command injection scenarios
+- Path traversal edge cases
+- Rate limiting boundaries
+- Authentication flows
+
+## Reporting Vulnerabilities
+
+**Please do NOT open a public GitHub issue for security vulnerabilities.**
+
+Instead, report responsibly:
+
+1. **GitHub Security Advisories**: [Create advisory](https://github.com/dallay/corvus/security/advisories/new)
+2. **Email**: Contact maintainers privately
+
+### Response Timeline
+
+- **Acknowledgment**: Within 48 hours
+- **Assessment**: Within 1 week
+- **Fix**: Within 2 weeks for critical issues
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sandbox Runtimes" icon="box" href="/guides/security/sandbox">
+    Docker isolation and native runtime security
+  </Card>
+  <Card title="Gateway Security" icon="shield-halved" href="/guides/security/gateway">
+    Pairing, authentication, and network restrictions
+  </Card>
+</CardGroup>

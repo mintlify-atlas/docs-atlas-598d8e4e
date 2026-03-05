@@ -1,0 +1,407 @@
+---
+title: 'Memory Trait'
+description: 'Core trait for memory backend implementations'
+icon: 'database'
+---
+
+# Memory Trait
+
+The `Memory` trait defines the interface for all memory backends in Corvus. Every backend (SQLite, SurrealDB, Markdown) implements this trait.
+
+Source: `src/memory/traits.rs:58-111`
+
+## Trait Definition
+
+```rust
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait Memory: Send + Sync {
+    /// Backend name
+    fn name(&self) -> &str;
+    
+    /// Store a memory entry
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<()>;
+    
+    /// Recall memories matching a query
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>>;
+    
+    /// Get a specific memory by key
+    async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
+    
+    /// List all memory keys
+    async fn list(
+        &self,
+        category: Option<&MemoryCategory>,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>>;
+    
+    /// Remove a memory by key
+    async fn forget(&self, key: &str) -> anyhow::Result<bool>;
+    
+    /// Count total memories
+    async fn count(&self) -> anyhow::Result<usize>;
+    
+    /// Health check
+    async fn health_check(&self) -> bool;
+    
+    /// Validate AI response against memory rules (optional)
+    async fn validate_response(
+        &self,
+        _user_query: &str,
+        _response: &str,
+        _session_id: Option<&str>,
+    ) -> anyhow::Result<MemoryValidationResult> {
+        Ok(MemoryValidationResult::default())
+    }
+}
+```
+
+## Core Types
+
+### MemoryEntry
+
+From `src/memory/traits.rs:5-14`:
+
+```rust
+pub struct MemoryEntry {
+    pub id: String,
+    pub key: String,
+    pub content: String,
+    pub category: MemoryCategory,
+    pub timestamp: String,
+    pub session_id: Option<String>,
+    pub score: Option<f64>,  // relevance score from search
+}
+```
+
+### MemoryCategory
+
+From `src/memory/traits.rs:32-54`:
+
+```rust
+pub enum MemoryCategory {
+    /// Long-term facts, preferences, decisions
+    Core,
+    /// Daily session logs
+    Daily,
+    /// Conversation context
+    Conversation,
+    /// User-defined custom category
+    Custom(String),
+}
+
+impl std::fmt::Display for MemoryCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Core => write!(f, "core"),
+            Self::Daily => write!(f, "daily"),
+            Self::Conversation => write!(f, "conversation"),
+            Self::Custom(name) => write!(f, "{}", name),
+        }
+    }
+}
+```
+
+### MemoryValidationResult
+
+From `src/memory/traits.rs:16-29`:
+
+```rust
+pub struct MemoryValidationResult {
+    pub valid: bool,
+    pub violations: Vec<String>,
+}
+
+impl Default for MemoryValidationResult {
+    fn default() -> Self {
+        Self {
+            valid: true,
+            violations: Vec::new(),
+        }
+    }
+}
+```
+
+## Implementing a Memory Backend
+
+Minimal example:
+
+```rust
+use async_trait::async_trait;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+
+pub struct InMemoryBackend {
+    data: Arc<RwLock<HashMap<String, MemoryEntry>>>,
+}
+
+impl InMemoryBackend {
+    pub fn new() -> Self {
+        Self {
+            data: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl Memory for InMemoryBackend {
+    fn name(&self) -> &str {
+        "in-memory"
+    }
+    
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let mut data = self.data.write().await;
+        
+        let entry = MemoryEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            key: key.to_string(),
+            content: content.to_string(),
+            category,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            session_id: session_id.map(|s| s.to_string()),
+            score: None,
+        };
+        
+        data.insert(key.to_string(), entry);
+        Ok(())
+    }
+    
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let data = self.data.read().await;
+        
+        let mut results: Vec<_> = data.values()
+            .filter(|e| {
+                // Filter by session if provided
+                if let Some(sid) = session_id {
+                    e.session_id.as_deref() == Some(sid)
+                } else {
+                    true
+                }
+            })
+            .filter(|e| {
+                // Simple keyword matching
+                e.content.to_lowercase().contains(&query.to_lowercase())
+            })
+            .cloned()
+            .collect();
+        
+        // Sort by relevance (placeholder: alphabetical)
+        results.sort_by(|a, b| a.key.cmp(&b.key));
+        results.truncate(limit);
+        
+        Ok(results)
+    }
+    
+    async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+        let data = self.data.read().await;
+        Ok(data.get(key).cloned())
+    }
+    
+    async fn list(
+        &self,
+        category: Option<&MemoryCategory>,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let data = self.data.read().await;
+        
+        let results = data.values()
+            .filter(|e| {
+                let cat_match = category.map_or(true, |c| &e.category == c);
+                let sess_match = session_id.map_or(true, |s| e.session_id.as_deref() == Some(s));
+                cat_match && sess_match
+            })
+            .cloned()
+            .collect();
+        
+        Ok(results)
+    }
+    
+    async fn forget(&self, key: &str) -> anyhow::Result<bool> {
+        let mut data = self.data.write().await;
+        Ok(data.remove(key).is_some())
+    }
+    
+    async fn count(&self) -> anyhow::Result<usize> {
+        let data = self.data.read().await;
+        Ok(data.len())
+    }
+    
+    async fn health_check(&self) -> bool {
+        true
+    }
+}
+```
+
+## Built-in Backends
+
+From `src/memory/mod.rs`:
+
+| Backend | File | Features |
+|---------|------|----------|
+| SQLite | `sqlite.rs` | Vector search, FTS5, caching |
+| SurrealDB | `surreal.rs` | Graph queries, native vectors |
+| Markdown | `markdown.rs` | Human-readable, git-friendly |
+| None | `none.rs` | No-op implementation |
+
+## Search Implementation: SQLite
+
+From `src/memory/sqlite.rs:200-300`:
+
+```rust
+async fn recall(
+    &self,
+    query: &str,
+    limit: usize,
+    session_id: Option<&str>,
+) -> anyhow::Result<Vec<MemoryEntry>> {
+    // 1. Embed query
+    let query_embedding = self.embedder.embed(query).await?;
+    
+    // 2. Vector search
+    let vector_results = self.vector_search(&query_embedding, limit * 2, session_id)?;
+    
+    // 3. Keyword search (FTS5)
+    let keyword_results = self.keyword_search(query, limit * 2, session_id)?;
+    
+    // 4. Hybrid merge
+    let merged = merge_search_results(
+        vector_results,
+        keyword_results,
+        self.vector_weight,
+        self.keyword_weight,
+        limit,
+    );
+    
+    // 5. Fetch full entries
+    let entries = self.fetch_entries(&merged)?;
+    
+    Ok(entries)
+}
+```
+
+## Registration
+
+Register your backend in `src/memory/mod.rs`:
+
+```rust
+pub fn create_memory_backend(
+    backend: &str,
+    workspace_dir: &Path,
+    config: &MemoryConfig,
+) -> anyhow::Result<Arc<dyn Memory>> {
+    match backend {
+        "sqlite" => Ok(Arc::new(sqlite::SqliteMemory::with_embedder(
+            workspace_dir,
+            create_embedder(config),
+            config.vector_weight,
+            config.keyword_weight,
+            10_000,
+            None,
+        )?)),
+        "surreal" => Ok(Arc::new(surreal::SurrealMemory::new(config)?)),
+        "markdown" => Ok(Arc::new(markdown::MarkdownMemory::new(workspace_dir))),
+        "none" => Ok(Arc::new(none::NoopMemory)),
+        _ => Err(anyhow::anyhow!("Unknown memory backend: {}", backend)),
+    }
+}
+```
+
+## Session Scoping
+
+Memories can be scoped to sessions:
+
+```rust
+// Store session-scoped memory
+memory.store(
+    "current_task",
+    "Implementing feature X",
+    MemoryCategory::Conversation,
+    Some("session-abc-123"),
+).await?;
+
+// Recall only from this session
+let results = memory.recall(
+    "task status",
+    10,
+    Some("session-abc-123"),
+).await?;
+```
+
+## Response Validation (Advanced)
+
+SurrealDB backend can validate responses against domain rules:
+
+```rust
+impl Memory for SurrealMemory {
+    async fn validate_response(
+        &self,
+        user_query: &str,
+        response: &str,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<MemoryValidationResult> {
+        // Query ontology/rules from graph
+        let rules = self.fetch_validation_rules(user_query).await?;
+        
+        let mut violations = Vec::new();
+        
+        for rule in rules {
+            if !rule.validate(response) {
+                violations.push(rule.description);
+            }
+        }
+        
+        Ok(MemoryValidationResult {
+            valid: violations.is_empty(),
+            violations,
+        })
+    }
+}
+```
+
+## Best Practices
+
+<Tip>
+  Implement **async operations** to avoid blocking the agent loop
+</Tip>
+
+<Tip>
+  Use **connection pooling** for database backends (SQLite, SurrealDB)
+</Tip>
+
+<Tip>
+  Cache **embeddings** to avoid redundant API calls (see `src/memory/sqlite.rs:164-186`)
+</Tip>
+
+<Warning>
+  **Never store secrets** (API keys, passwords) in memory. Use config or secure storage.
+</Warning>
+
+## Related
+
+- [Memory Overview](/guides/memory/overview)
+- [SQLite Backend](/guides/memory/sqlite)
+- [SurrealDB Backend](/guides/memory/surrealdb)
+- [Custom Memory Example](/extend/custom-memory)

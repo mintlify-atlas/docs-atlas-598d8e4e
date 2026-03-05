@@ -1,0 +1,630 @@
+---
+title: Trait System
+description: Understanding Corvus's trait-based extensibility architecture
+---
+
+Corvus is built on a **trait-driven architecture** that enables clean extensibility without tight coupling. This page explains the core traits and how to implement them.
+
+## Why Traits?
+
+The trait-based design provides several key benefits:
+
+<AccordionGroup>
+  <Accordion title="Modularity">
+    Each component is self-contained and can be developed, tested, and deployed independently.
+  </Accordion>
+  <Accordion title="Extensibility">
+    Add new providers, tools, or channels without modifying core code.
+  </Accordion>
+  <Accordion title="Type Safety">
+    Rust's type system ensures implementations meet contracts at compile time.
+  </Accordion>
+  <Accordion title="Testability">
+    Mock implementations make testing straightforward.
+  </Accordion>
+  <Accordion title="Performance">
+    Zero-cost abstractions with static dispatch where possible.
+  </Accordion>
+</AccordionGroup>
+
+## Core Traits
+
+Corvus defines six primary traits that form the extension surface:
+
+### Provider Trait
+
+The **Provider** trait abstracts LLM API interactions.
+
+**Location:** `clients/agent-runtime/src/providers/traits.rs`
+
+```rust
+#[async_trait]
+pub trait Provider: Send + Sync {
+    /// Query provider capabilities (native tool calling, streaming, etc.)
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+
+    /// Convert tool specs to provider-native format
+    fn convert_tools(&self, tools: &[ToolSpec]) -> ToolsPayload {
+        ToolsPayload::PromptGuided {
+            instructions: build_tool_instructions_text(tools),
+        }
+    }
+
+    /// One-shot chat with optional system prompt
+    async fn chat_with_system(
+        &self,
+        system_prompt: Option<&str>,
+        message: &str,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<String>;
+
+    /// Multi-turn conversation with history
+    async fn chat_with_history(
+        &self,
+        messages: &[ChatMessage],
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<String> { /* default impl */ }
+
+    /// Structured chat API for agent loop (with tool calls)
+    async fn chat(
+        &self,
+        request: ChatRequest<'_>,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<ChatResponse> { /* default impl */ }
+
+    /// Chat with native tool calling support
+    async fn chat_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<ChatResponse> { /* default impl */ }
+
+    /// Whether provider supports streaming responses
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
+    /// Streaming chat with optional system prompt
+    fn stream_chat_with_system(
+        &self,
+        system_prompt: Option<&str>,
+        message: &str,
+        model: &str,
+        temperature: f64,
+        options: StreamOptions,
+    ) -> stream::BoxStream<'static, StreamResult<StreamChunk>> { /* default */ }
+
+    /// Warm up HTTP connection pool
+    async fn warmup(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+```
+
+**Key types:**
+
+```rust
+pub struct ChatMessage {
+    pub role: String,    // "system" | "user" | "assistant" | "tool"
+    pub content: String,
+}
+
+pub struct ChatResponse {
+    pub text: Option<String>,
+    pub tool_calls: Vec<ToolCall>,
+}
+
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,  // JSON
+}
+
+pub struct ProviderCapabilities {
+    pub native_tool_calling: bool,
+}
+```
+
+**Example implementation:**
+
+```rust
+use async_trait::async_trait;
+
+pub struct CustomProvider {
+    client: reqwest::Client,
+    api_key: String,
+}
+
+#[async_trait]
+impl Provider for CustomProvider {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            native_tool_calling: true,
+        }
+    }
+
+    async fn chat_with_system(
+        &self,
+        system_prompt: Option<&str>,
+        message: &str,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<String> {
+        // Make API request to your LLM provider
+        let response = self.client
+            .post("https://api.custom-llm.com/v1/chat")
+            .json(&serde_json::json!({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt.unwrap_or("")},
+                    {"role": "user", "content": message}
+                ],
+                "temperature": temperature
+            }))
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        Ok(response["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string())
+    }
+}
+```
+
+### Channel Trait
+
+The **Channel** trait abstracts messaging platform interactions.
+
+**Location:** `clients/agent-runtime/src/channels/traits.rs`
+
+```rust
+#[async_trait]
+pub trait Channel: Send + Sync {
+    /// Human-readable channel name
+    fn name(&self) -> &str;
+
+    /// Send a message through this channel
+    async fn send(&self, message: &SendMessage) -> anyhow::Result<()>;
+
+    /// Start listening for incoming messages (long-running)
+    async fn listen(
+        &self,
+        tx: tokio::sync::mpsc::Sender<ChannelMessage>,
+    ) -> anyhow::Result<()>;
+
+    /// Check if channel is healthy
+    async fn health_check(&self) -> bool {
+        true
+    }
+
+    /// Signal that the bot is processing (typing indicator)
+    async fn start_typing(&self, recipient: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Stop typing indicator
+    async fn stop_typing(&self, recipient: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Whether this channel supports progressive message updates
+    fn supports_draft_updates(&self) -> bool {
+        false
+    }
+
+    /// Send an initial draft message (returns message ID)
+    async fn send_draft(
+        &self,
+        message: &SendMessage,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// Update a previously sent draft with new content
+    async fn update_draft(
+        &self,
+        recipient: &str,
+        message_id: &str,
+        text: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Finalize draft with complete response
+    async fn finalize_draft(
+        &self,
+        recipient: &str,
+        message_id: &str,
+        text: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+```
+
+**Key types:**
+
+```rust
+pub struct ChannelMessage {
+    pub id: String,
+    pub sender: String,
+    pub reply_target: String,
+    pub content: String,
+    pub channel: String,
+    pub timestamp: u64,
+}
+
+pub struct SendMessage {
+    pub content: String,
+    pub recipient: String,
+    pub subject: Option<String>,
+}
+```
+
+### Tool Trait
+
+The **Tool** trait defines agent capabilities.
+
+**Location:** `clients/agent-runtime/src/tools/traits.rs`
+
+```rust
+#[async_trait]
+pub trait Tool: Send + Sync {
+    /// Tool name (used in LLM function calling)
+    fn name(&self) -> &str;
+
+    /// Human-readable description
+    fn description(&self) -> &str;
+
+    /// JSON schema for parameters
+    fn parameters_schema(&self) -> serde_json::Value;
+
+    /// Execute the tool with given arguments
+    async fn execute(
+        &self,
+        args: serde_json::Value,
+    ) -> anyhow::Result<ToolResult>;
+
+    /// Get the full spec for LLM registration
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters_schema(),
+            source: None,
+        }
+    }
+}
+```
+
+**Key types:**
+
+```rust
+pub struct ToolResult {
+    pub success: bool,
+    pub output: String,
+    pub error: Option<String>,
+}
+
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,  // JSON Schema
+    pub source: Option<ToolSourceMetadata>,
+}
+```
+
+**Example implementation:**
+
+```rust
+use async_trait::async_trait;
+
+pub struct WeatherTool;
+
+#[async_trait]
+impl Tool for WeatherTool {
+    fn name(&self) -> &str {
+        "get_weather"
+    }
+
+    fn description(&self) -> &str {
+        "Get current weather for a location"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "City name or zip code"
+                },
+                "units": {
+                    "type": "string",
+                    "enum": ["celsius", "fahrenheit"],
+                    "default": "celsius"
+                }
+            },
+            "required": ["location"]
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let location = args["location"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing location"))?;
+        let units = args["units"].as_str().unwrap_or("celsius");
+
+        // Call weather API
+        let temp = fetch_weather(location, units).await?;
+
+        Ok(ToolResult {
+            success: true,
+            output: format!("Temperature in {}: {}°", location, temp),
+            error: None,
+        })
+    }
+}
+```
+
+### Memory Trait
+
+The **Memory** trait abstracts persistence backends.
+
+**Location:** `clients/agent-runtime/src/memory/traits.rs`
+
+```rust
+#[async_trait]
+pub trait Memory: Send + Sync {
+    /// Backend name
+    fn name(&self) -> &str;
+
+    /// Store a memory entry
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<()>;
+
+    /// Recall memories matching a query
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>>;
+
+    /// Get a specific memory by key
+    async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
+
+    /// List all memory keys
+    async fn list(
+        &self,
+        category: Option<&MemoryCategory>,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>>;
+
+    /// Remove a memory by key
+    async fn forget(&self, key: &str) -> anyhow::Result<bool>;
+
+    /// Count total memories
+    async fn count(&self) -> anyhow::Result<usize>;
+
+    /// Health check
+    async fn health_check(&self) -> bool;
+
+    /// Validate an AI response against memory-backed rules
+    async fn validate_response(
+        &self,
+        user_query: &str,
+        response: &str,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<MemoryValidationResult> {
+        Ok(MemoryValidationResult::default())  // Default: permissive
+    }
+}
+```
+
+**Key types:**
+
+```rust
+pub struct MemoryEntry {
+    pub id: String,
+    pub key: String,
+    pub content: String,
+    pub category: MemoryCategory,
+    pub timestamp: String,
+    pub session_id: Option<String>,
+    pub score: Option<f64>,
+}
+
+pub enum MemoryCategory {
+    Core,           // Long-term facts
+    Daily,          // Session logs
+    Conversation,   // Chat context
+    Custom(String), // User-defined
+}
+```
+
+### RuntimeAdapter Trait
+
+The **RuntimeAdapter** trait abstracts execution environments.
+
+**Location:** `clients/agent-runtime/src/runtime/traits.rs`
+
+```rust
+pub trait RuntimeAdapter: Send + Sync {
+    /// Human-readable runtime name
+    fn name(&self) -> &str;
+
+    /// Whether this runtime supports shell access
+    fn has_shell_access(&self) -> bool;
+
+    /// Whether this runtime supports filesystem access
+    fn has_filesystem_access(&self) -> bool;
+
+    /// Base storage path for this runtime
+    fn storage_path(&self) -> PathBuf;
+
+    /// Whether long-running processes are supported
+    fn supports_long_running(&self) -> bool;
+
+    /// Maximum memory budget in bytes (0 = unlimited)
+    fn memory_budget(&self) -> u64 {
+        0
+    }
+
+    /// Build a shell command process for this runtime
+    fn build_shell_command(
+        &self,
+        command: &str,
+        workspace_dir: &Path,
+    ) -> anyhow::Result<tokio::process::Command>;
+}
+```
+
+See [Runtime Model](/runtime-model) for implementation details.
+
+### Observer Trait
+
+The **Observer** trait enables observability and monitoring.
+
+**Location:** `clients/agent-runtime/src/observability/traits.rs`
+
+```rust
+pub trait Observer: Send + Sync + 'static {
+    /// Record a discrete event
+    fn record_event(&self, event: &ObserverEvent);
+
+    /// Record a numeric metric
+    fn record_metric(&self, metric: &ObserverMetric);
+
+    /// Flush any buffered data
+    fn flush(&self) {}
+
+    /// Human-readable name
+    fn name(&self) -> &str;
+
+    /// Downcast to `Any` for backend-specific operations
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+```
+
+**Event types:**
+
+```rust
+pub enum ObserverEvent {
+    AgentStart { provider: String, model: String },
+    LlmRequest { provider: String, model: String, messages_count: usize },
+    LlmResponse { provider: String, model: String, duration: Duration, success: bool },
+    ToolCallStart { tool: String },
+    ToolCall { tool: String, duration: Duration, success: bool },
+    TurnComplete,
+    ChannelMessage { channel: String, direction: String },
+    Error { component: String, message: String },
+    // ... and more
+}
+```
+
+## Factory Pattern
+
+Corvus uses factory functions to construct trait implementations from configuration:
+
+```rust
+// Provider factory
+pub fn create_provider(config: &ProviderConfig) -> anyhow::Result<Box<dyn Provider>> {
+    match config.kind.as_str() {
+        "openai" => Ok(Box::new(OpenAIProvider::new(config)?)),
+        "anthropic" => Ok(Box::new(AnthropicProvider::new(config)?)),
+        "gemini" => Ok(Box::new(GeminiProvider::new(config)?)),
+        _ => anyhow::bail!("Unknown provider: {}", config.kind),
+    }
+}
+
+// Runtime factory
+pub fn create_runtime(config: &RuntimeConfig) -> anyhow::Result<Box<dyn RuntimeAdapter>> {
+    match config.kind.as_str() {
+        "native" => Ok(Box::new(NativeRuntime::new())),
+        "docker" => Ok(Box::new(DockerRuntime::new(config.docker.clone()))),
+        _ => anyhow::bail!("Unknown runtime: {}", config.kind),
+    }
+}
+```
+
+## Best Practices
+
+When implementing Corvus traits:
+
+<Check>**Do:**</Check>
+- Use `async_trait` for async trait methods
+- Return `anyhow::Result` for fallible operations
+- Implement `Send + Sync` for thread safety
+- Provide default implementations where sensible
+- Validate inputs early and return descriptive errors
+- Use structured logging (not println!)
+
+<Warning>**Don't:**</Warning>
+- Panic in trait implementations
+- Block the async runtime with synchronous I/O
+- Log sensitive data (credentials, tokens)
+- Ignore error handling
+- Make blocking HTTP calls without timeouts
+
+## Testing Traits
+
+Mock implementations make testing straightforward:
+
+```rust
+struct MockProvider;
+
+#[async_trait]
+impl Provider for MockProvider {
+    async fn chat_with_system(
+        &self,
+        _system: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+    ) -> anyhow::Result<String> {
+        Ok("mocked response".to_string())
+    }
+}
+
+#[tokio::test]
+async fn test_agent_with_mock_provider() {
+    let provider = MockProvider;
+    let response = provider
+        .chat_with_system(None, "test", "model", 0.7)
+        .await
+        .unwrap();
+    assert_eq!(response, "mocked response");
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" icon="sitemap" href="/architecture">
+    See how traits fit into the system
+  </Card>
+  <Card title="Building Custom Providers" icon="plug" href="/extend/custom-provider">
+    Implement your own LLM provider
+  </Card>
+  <Card title="Creating Tools" icon="wrench" href="/extend/custom-tool">
+    Extend agent capabilities
+  </Card>
+  <Card title="Runtime Model" icon="server" href="/runtime-model">
+    Understand execution environments
+  </Card>
+</CardGroup>

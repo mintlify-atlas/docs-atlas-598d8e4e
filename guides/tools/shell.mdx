@@ -1,0 +1,222 @@
+---
+title: 'Shell Tool'
+description: 'Execute shell commands with security sandboxing'
+---
+
+# Shell Tool
+
+The `shell` tool enables the agent to execute shell commands in the workspace. It's one of the most powerful tools, protected by multiple security layers.
+
+## Usage
+
+The agent can request shell execution via function calling:
+
+```json
+{
+  "name": "shell",
+  "arguments": {
+    "command": "git status"
+  }
+}
+```
+
+## Parameters
+
+<ParamField path="command" type="string" required>
+  The shell command to execute
+</ParamField>
+
+<ParamField path="approved" type="boolean" default="false">
+  Explicit approval flag for medium/high-risk commands in supervised mode
+</ParamField>
+
+## Security Layers
+
+### 1. Command Allowlist
+
+Only allowed commands can run (config: `autonomy.allowed_commands`):
+
+```toml
+[autonomy]
+allowed_commands = ["git", "npm", "cargo", "ls", "cat", "grep"]
+```
+
+### 2. Risk Classification
+
+Commands are classified by risk:
+
+- **Low risk**: Read-only commands (e.g., `ls`, `cat`, `git status`)
+- **Medium risk**: Write operations (e.g., `touch`, `mkdir`, `git commit`)
+- **High risk**: Dangerous operations (e.g., `rm -rf`, `chmod`, `sudo`)
+
+In **supervised mode**, medium/high risk commands require explicit approval:
+
+```json
+{
+  "command": "rm old_file.txt",
+  "approved": true
+}
+```
+
+### 3. Environment Sanitization
+
+The shell environment is cleared and only safe variables are passed:
+
+```rust
+const SAFE_ENV_VARS: &[&str] = &[
+    "PATH", "HOME", "TERM", "LANG", "LC_ALL", 
+    "LC_CTYPE", "USER", "SHELL", "TMPDIR",
+];
+```
+
+**API keys, secrets, and tokens are never leaked to shell commands.**
+
+From `src/tools/shell.rs:112-118`:
+
+```rust
+cmd.env_clear();
+for var in SAFE_ENV_VARS {
+    if let Ok(val) = std::env::var(var) {
+        cmd.env(var, val);
+    }
+}
+```
+
+### 4. Timeout Protection
+
+Commands are killed after 60 seconds:
+
+```rust
+const SHELL_TIMEOUT_SECS: u64 = 60;
+```
+
+### 5. Output Limits
+
+Output is truncated at 1MB to prevent OOM:
+
+```rust
+const MAX_OUTPUT_BYTES: usize = 1_048_576;
+```
+
+## Autonomy Levels
+
+| Level | Behavior |
+|-------|----------|
+| **ReadOnly** | Shell tool is completely disabled |
+| **Supervised** | Allowed commands only; approval required for risky operations |
+| **Full** | Allowed commands execute without approval |
+
+## Runtime Adapters
+
+The shell tool respects the configured runtime:
+
+### Native Runtime
+
+Commands execute directly on the host:
+
+```rust
+let mut cmd = tokio::process::Command::new("sh");
+cmd.arg("-c").arg(command);
+cmd.current_dir(&self.security.workspace_dir);
+```
+
+### Docker Runtime
+
+Commands execute in an isolated container:
+
+```toml
+[runtime.docker]
+image = "alpine:3.20"
+network = "none"
+memory_limit_mb = 512
+read_only_rootfs = true
+```
+
+## Example Interactions
+
+### Successful Execution
+
+```json
+// Input
+{"command": "git log --oneline -5"}
+
+// Output
+{
+  "success": true,
+  "output": "abc1234 feat: add new feature\ndef5678 fix: resolve bug\n...",
+  "error": null
+}
+```
+
+### Blocked Command
+
+```json
+// Input
+{"command": "python script.py"}
+
+// Output (if 'python' not in allowlist)
+{
+  "success": false,
+  "output": "",
+  "error": "Command 'python' not allowed by security policy"
+}
+```
+
+### Timeout
+
+```json
+// Input
+{"command": "sleep 120"}
+
+// Output
+{
+  "success": false,
+  "output": "",
+  "error": "Command timed out after 60s and was killed"
+}
+```
+
+## Implementation Reference
+
+Source: `src/tools/shell.rs`
+
+```rust
+pub struct ShellTool {
+    security: Arc<SecurityPolicy>,
+    runtime: Arc<dyn RuntimeAdapter>,
+}
+
+#[async_trait]
+impl Tool for ShellTool {
+    fn name(&self) -> &str { "shell" }
+    
+    fn description(&self) -> &str {
+        "Execute a shell command in the workspace directory"
+    }
+    
+    async fn execute(&self, args: serde_json::Value) 
+        -> anyhow::Result<ToolResult> 
+    {
+        // Security validation
+        // Rate limit check
+        // Command execution with timeout
+        // Output truncation
+    }
+}
+```
+
+## Best Practices
+
+<Tip>
+  Start with a minimal `allowed_commands` list and add commands as needed. This reduces attack surface.
+</Tip>
+
+<Warning>
+  Never add `sudo`, `su`, `chmod +x`, or `rm -rf` to allowed commands in production.
+</Warning>
+
+## Related
+
+- [File Operations](/guides/tools/file-operations)
+- [Security Policy](/guides/security/policy)
+- [Runtime Configuration](/guides/deployment#runtime-configuration)

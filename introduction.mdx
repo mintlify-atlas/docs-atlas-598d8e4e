@@ -1,0 +1,188 @@
+---
+title: Introduction
+description: Welcome to Corvus - A reactive, always-on AI agent framework for long-running orchestration workloads
+---
+
+# Introduction to Corvus
+
+Corvus is a reactive, always-on agent platform designed for long-running orchestration workloads. Built with a robust Kotlin Multiplatform foundation and powered by a high-performance Rust runtime, Corvus provides a secure, sandboxed environment for AI agents to perform complex, multi-step tasks.
+
+<Note>
+  **Fast, small, and fully autonomous** - Corvus delivers a ~3.4MB binary with &lt;10ms startup time, 1,017 tests, 22+ AI providers, and 8 core traits for maximum extensibility.
+</Note>
+
+## What is Corvus?
+
+Corvus is a highly extensible, multi-interface agentic platform that bridges the gap between AI autonomy and human supervision. It's designed for teams who need:
+
+- **Ultra-lightweight deployment**: &lt;5MB memory footprint - 99% smaller than comparable frameworks
+- **Minimal infrastructure costs**: Efficient enough to run on $10 hardware
+- **Lightning-fast startup**: 400X faster startup time, boots in &lt;10ms
+- **True portability**: Single self-contained binary across ARM, x86, and RISC-V
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Multi-Interface Support" icon="window">
+    Interact with Corvus via CLI, Compose Multiplatform Desktop app, or web-based dashboard
+  </Card>
+  
+  <Card title="Always-On Autonomy" icon="robot">
+    Daemon mode for long-running agents that handle background tasks and persistent orchestration
+  </Card>
+  
+  <Card title="Secure Sandboxing" icon="shield-halved">
+    Execute dangerous commands safely within isolated Docker containers or restricted native runtimes
+  </Card>
+  
+  <Card title="Standardized Identity" icon="id-card">
+    Support for AIEOS v1.1, allowing portable and model-agnostic AI personas
+  </Card>
+  
+  <Card title="Hybrid Memory Model" icon="database">
+    Pluggable memory backends including SQLite, Neo4j, and SurrealDB for high-context retrieval
+  </Card>
+  
+  <Card title="Rich Integrations" icon="plug">
+    First-class support for WhatsApp, Telegram, Discord, Slack, and messaging platforms
+  </Card>
+</CardGroup>
+
+## Why Teams Choose Corvus
+
+### Lean by Default
+
+Corvus is built with Rust for maximum efficiency:
+
+- Small binary size (3.4MB)
+- Fast startup (&lt;10ms on modern hardware)
+- Low memory footprint (&lt;5MB)
+- Minimal resource consumption
+
+### Secure by Design
+
+Security is enforced at every layer:
+
+- Gateway pairing with one-time codes
+- Strict sandboxing with Docker or native isolation
+- Explicit allowlists for all integrations
+- Workspace scoping to prevent filesystem escapes
+- Encrypted secret storage
+
+### Fully Swappable Architecture
+
+Every core system is built on traits for maximum flexibility:
+
+- **Providers**: 22+ AI model providers (OpenRouter, Anthropic, OpenAI, Ollama, etc.)
+- **Channels**: CLI, Telegram, Discord, Slack, iMessage, Matrix, WhatsApp, Webhook
+- **Memory**: SQLite, SurrealDB, Markdown
+- **Tools**: shell, file operations, memory, browser automation
+- **Runtime**: Native or Docker sandboxed execution
+
+### No Lock-In
+
+Corvus supports OpenAI-compatible provider APIs plus custom endpoints, ensuring you're never locked into a single vendor.
+
+## Architecture Highlights
+
+<img src="/images/architecture.svg" alt="Corvus Architecture" />
+
+Corvus follows a trait-based architecture where every subsystem is swappable:
+
+| Subsystem | Trait | What's Included |
+|-----------|-------|----------------|
+| **AI Models** | `Provider` | 22+ providers including OpenRouter, Anthropic, OpenAI, Ollama, Venice, Groq, Mistral, xAI, DeepSeek, Together, Fireworks, Perplexity, Cohere, Bedrock |
+| **Channels** | `Channel` | CLI, Telegram, Discord, Slack, iMessage, Matrix, WhatsApp, Webhook |
+| **Memory** | `Memory` | SQLite (hybrid search), SurrealDB, Markdown |
+| **Tools** | `Tool` | shell, file_read, file_write, memory operations, browser_open |
+| **Runtime** | `RuntimeAdapter` | Native, Docker (sandboxed) |
+| **Security** | `SecurityPolicy` | Gateway pairing, sandbox, allowlists, rate limits, filesystem scoping |
+
+## Technology Stack
+
+<CardGroup cols={2}>
+  <Card title="Kotlin Multiplatform" icon="code">
+    Core logic shared across Desktop, Android, iOS, and Web
+  </Card>
+  
+  <Card title="Rust Agent Runtime" icon="gear">
+    High-performance sidecars and CLI (clients/agent-runtime/)
+  </Card>
+  
+  <Card title="Compose Multiplatform" icon="mobile">
+    Cross-platform desktop and mobile UI
+  </Card>
+  
+  <Card title="Astro + Vue 3" icon="globe">
+    Modern web stack with Tailwind CSS
+  </Card>
+</CardGroup>
+
+## Performance Comparison
+
+Benchmark snapshot comparing Corvus to similar frameworks (normalized for 0.8GHz edge hardware):
+
+| Metric | OpenClaw | NanoBot | PicoClaw | **Corvus** |
+|--------|----------|---------|----------|------------|
+| **Language** | TypeScript | Python | Go | **Rust** |
+| **RAM** | &gt;1GB | &gt;100MB | &lt;10MB | **&lt;5MB** |
+| **Startup (0.8GHz)** | &gt;500s | &gt;30s | &lt;1s | **&lt;10ms** |
+| **Binary Size** | ~28MB | N/A | ~8MB | **3.4MB** |
+| **Cost** | Mac Mini $599 | Linux SBC ~$50 | Linux Board $10 | **Any hardware $10** |
+
+<Note>
+  Corvus results measured with `/usr/bin/time -l` on release builds. Reproduce locally:
+  ```bash
+  cargo build --release
+  /usr/bin/time -l target/release/corvus --help
+  ```
+</Note>
+
+## Getting Started
+
+Ready to start building with Corvus? Check out these resources:
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get your first agent running in under 5 minutes
+  </Card>
+  
+  <Card title="Installation" icon="download" href="/installation">
+    Install Corvus via npm, cargo, or binary download
+  </Card>
+  
+  <Card title="Development" icon="code" href="/guides/deployment">
+    Learn how to develop and extend Corvus
+  </Card>
+  
+  <Card title="API Reference" icon="book" href="/api/traits/provider">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>
+
+## Project Structure
+
+Corvus is organized as a monorepo:
+
+```text
+corvus/
+├── clients/
+│   ├── agent-runtime/    # High-performance Rust Agent Core & CLI
+│   ├── composeApp/       # Shared UI logic for Desktop/Mobile
+│   ├── web/              # Web monorepo (Docs, Dashboard, Marketing)
+│   ├── androidApp/       # Android specific wrapper
+│   └── iosApp/           # iOS specific wrapper
+├── modules/
+│   └── agent-core-kmp/   # Core Kotlin Multiplatform logic & contracts
+├── dev/                  # Local development environment (Docker/Sandbox)
+├── gradle/               # Build logic and configurations
+└── Makefile              # Standard entry point for development tasks
+```
+
+## License
+
+Corvus is licensed under the [Apache License 2.0](https://github.com/dallay/corvus/blob/main/LICENSE).
+
+<Note>
+  **Active Development**: Corvus is currently in active development. Features and architecture are subject to evolution.
+</Note>

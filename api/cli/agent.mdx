@@ -1,0 +1,92 @@
+---
+title: 'corvus agent'
+description: 'Start the AI agent loop'
+---
+
+# corvus agent
+
+Start the AI agent in interactive or single-message mode.
+
+## Usage
+
+```bash
+corvus agent [OPTIONS]
+```
+
+## Interactive Mode
+
+```bash
+corvus agent
+```
+
+Enters a REPL (Read-Eval-Print Loop) where you can chat with the agent:
+
+```
+🦀 Corvus Agent (Ctrl+C to exit)
+
+You: Create a new Rust project
+Agent: I'll create a new Rust project for you...
+[Tool: shell] cargo new my-project
+✔ Created binary project `my-project`
+
+You: What files were created?
+Agent: Let me check...
+[Tool: shell] ls -la my-project/
+...
+```
+
+## Single Message Mode
+
+```bash
+corvus agent -m "What is Rust?"
+```
+
+Processes one message and exits.
+
+## Options
+
+<ParamField path="-m, --message" type="string">
+  Single message mode (don't enter interactive mode)
+</ParamField>
+
+<ParamField path="-p, --provider" type="string">
+  Provider to use (overrides config: `openai`, `anthropic`, `openrouter`)
+</ParamField>
+
+<ParamField path="--model" type="string">
+  Model to use (overrides config: e.g. `claude-sonnet-4`, `gpt-4`)
+</ParamField>
+
+<ParamField path="-t, --temperature" type="float" default="0.7">
+  Temperature (0.0 - 2.0)
+</ParamField>
+
+<ParamField path="--peripheral" type="string[]">
+  Attach peripherals in `board:path` format (e.g., `nucleo-f401re:/dev/ttyACM0`)
+</ParamField>
+
+## Examples
+
+### Custom Provider
+
+```bash
+corvus agent --provider anthropic --model claude-sonnet-4
+```
+
+### High Temperature (Creative)
+
+```bash
+corvus agent -t 1.5 -m "Write a creative story"
+```
+
+### With Peripheral
+
+```bash
+corvus agent --peripheral nucleo-f401re:/dev/ttyACM0
+```
+
+## Related
+
+- [CLI Commands](/api/cli/commands)
+- [Gateway Command](/api/cli/gateway)
+- [Daemon Command](/api/cli/daemon)

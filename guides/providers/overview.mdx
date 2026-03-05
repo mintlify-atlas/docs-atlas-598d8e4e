@@ -1,0 +1,236 @@
+---
+title: AI Providers Overview
+description: Learn about the 30+ AI providers supported by Corvus and how to switch between them
+---
+
+Corvus supports 30+ AI providers through a unified `Provider` trait interface, enabling seamless switching between models and vendors.
+
+## Provider Trait Interface
+
+All providers implement the `Provider` trait from `~/workspace/source/clients/agent-runtime/src/providers/traits.rs:230`, which defines:
+
+```rust
+pub trait Provider: Send + Sync {
+    // Basic chat methods
+    async fn simple_chat(&self, message: &str, model: &str, temperature: f64) -> Result<String>;
+    async fn chat_with_system(&self, system_prompt: Option<&str>, message: &str, model: &str, temperature: f64) -> Result<String>;
+    async fn chat_with_history(&self, messages: &[ChatMessage], model: &str, temperature: f64) -> Result<String>;
+    
+    // Structured chat with tool support
+    async fn chat(&self, request: ChatRequest<'_>, model: &str, temperature: f64) -> Result<ChatResponse>;
+    
+    // Capabilities
+    fn capabilities(&self) -> ProviderCapabilities;
+    fn supports_native_tools(&self) -> bool;
+    fn supports_streaming(&self) -> bool;
+    
+    // Tool conversion
+    fn convert_tools(&self, tools: &[ToolSpec]) -> ToolsPayload;
+    
+    // Performance
+    async fn warmup(&self) -> Result<()>;
+}
+```
+
+## Supported Providers
+
+Corvus supports 30+ providers organized into several categories:
+
+### Primary Providers
+
+Providers with custom implementations for optimal performance:
+
+| Provider | Config Name | API Key Variable | Tool Support | Notes |
+|----------|-------------|------------------|--------------|-------|
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | ✅ Native | Access to 100+ models |
+| Anthropic | `anthropic` | `ANTHROPIC_API_KEY`, `ANTHROPIC_OAUTH_TOKEN` | ✅ Native | Claude models with prompt caching |
+| OpenAI | `openai` | `OPENAI_API_KEY` | ✅ Native | GPT-4o, o1, o3-mini |
+| OpenAI Codex | `openai-codex` | OAuth flow | ✅ Native | Authenticated via OAuth |
+| Ollama | `ollama` | `OLLAMA_API_KEY` (optional) | ✅ Native | Local model hosting |
+| Gemini | `gemini`, `google`, `google-gemini` | Auto-detected | ✅ Native | Google's Gemini models |
+| GitHub Copilot | `copilot`, `github-copilot` | `GITHUB_TOKEN`, `GH_TOKEN` | ✅ Native | Copilot Chat models |
+
+### OpenAI-Compatible Providers
+
+Providers using the OpenAI chat completions API format:
+
+| Provider | Config Name | API Key Variable | Base URL |
+|----------|-------------|------------------|----------|
+| Venice | `venice` | `VENICE_API_KEY` | https://api.venice.ai |
+| Vercel AI Gateway | `vercel`, `vercel-ai` | `VERCEL_API_KEY` | https://api.vercel.ai |
+| Cloudflare AI | `cloudflare`, `cloudflare-ai` | `CLOUDFLARE_API_KEY` | https://gateway.ai.cloudflare.com/v1 |
+| Groq | `groq` | `GROQ_API_KEY` | https://api.groq.com/openai |
+| Mistral | `mistral` | `MISTRAL_API_KEY` | https://api.mistral.ai/v1 |
+| xAI (Grok) | `xai`, `grok` | `XAI_API_KEY` | https://api.x.ai |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | https://api.deepseek.com |
+| Together AI | `together`, `together-ai` | `TOGETHER_API_KEY` | https://api.together.xyz |
+| Fireworks AI | `fireworks`, `fireworks-ai` | `FIREWORKS_API_KEY` | https://api.fireworks.ai/inference/v1 |
+| Perplexity | `perplexity` | `PERPLEXITY_API_KEY` | https://api.perplexity.ai |
+| Cohere | `cohere` | `COHERE_API_KEY` | https://api.cohere.com/compatibility |
+| Amazon Bedrock | `bedrock`, `aws-bedrock` | AWS credentials | https://bedrock-runtime.us-east-1.amazonaws.com |
+| NVIDIA NIM | `nvidia`, `nvidia-nim`, `build.nvidia.com` | `NVIDIA_API_KEY` | https://integrate.api.nvidia.com/v1 |
+| LM Studio | `lmstudio`, `lm-studio` | Optional | http://localhost:1234/v1 |
+
+### Chinese AI Providers
+
+Providers with region-specific endpoints:
+
+| Provider | Config Names | API Key Variable | Regions |
+|----------|--------------|------------------|----------|
+| Moonshot (Kimi) | `moonshot`, `moonshot-cn`, `moonshot-intl`, `kimi`, `kimi-cn`, `kimi-global` | `MOONSHOT_API_KEY` | CN, International |
+| GLM (Zhipu) | `glm`, `glm-cn`, `glm-global`, `zhipu`, `zhipu-cn`, `bigmodel` | `GLM_API_KEY` | CN, Global |
+| MiniMax | `minimax`, `minimax-cn`, `minimax-intl`, `minimax-io`, `minimaxi` | `MINIMAX_API_KEY` | CN, International |
+| Qwen (DashScope) | `qwen`, `qwen-cn`, `qwen-intl`, `qwen-us`, `dashscope`, `dashscope-intl`, `dashscope-us` | `DASHSCOPE_API_KEY` | CN, International, US |
+| Z.AI | `zai`, `z.ai`, `zai-cn`, `zai-global`, `z.ai-cn`, `z.ai-global` | `ZAI_API_KEY` | CN, Global |
+| Qianfan (Baidu) | `qianfan`, `baidu` | `QIANFAN_API_KEY` | CN |
+
+### Other Providers
+
+| Provider | Config Name | API Key Variable | Base URL |
+|----------|-------------|------------------|----------|
+| Astrai | `astrai` | `ASTRAI_API_KEY` | https://as-trai.com/v1 |
+| Synthetic | `synthetic` | `SYNTHETIC_API_KEY` | https://api.synthetic.com |
+| OpenCode Zen | `opencode`, `opencode-zen` | `OPENCODE_API_KEY` | https://opencode.ai/zen/v1 |
+
+## Provider Capabilities
+
+Providers declare their capabilities through the `ProviderCapabilities` struct:
+
+```rust
+pub struct ProviderCapabilities {
+    /// Whether the provider supports native tool calling via API primitives
+    pub native_tool_calling: bool,
+}
+```
+
+Providers with **native tool calling** support:
+- OpenRouter
+- Anthropic (Claude)
+- OpenAI (GPT-4o, o1, o3-mini)
+- Gemini
+- Ollama (with compatible models)
+- OpenAI-compatible providers
+
+Providers without native tool calling automatically fall back to **prompt-guided tool use** with XML-style tags.
+
+## How to Switch Providers
+
+### In Configuration File
+
+Edit `~/.config/corvus/config.toml`:
+
+```toml
+[runtime]
+provider = "anthropic"
+model = "claude-3-5-sonnet-20241022"
+temperature = 0.7
+
+[runtime.provider_config]
+api_key = "sk-ant-..."
+# Or use environment variable: ANTHROPIC_API_KEY
+```
+
+### Via Environment Variables
+
+Set provider-specific API key:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-proj-..."
+export GROQ_API_KEY="gsk_..."
+```
+
+Generic fallback variables:
+
+```bash
+export CORVUS_API_KEY="your-key"
+export API_KEY="your-key"
+```
+
+### Programmatically
+
+Using the factory function from `~/workspace/source/clients/agent-runtime/src/providers/mod.rs:382`:
+
+```rust
+use corvus_runtime::providers::create_provider;
+
+// Create provider with explicit API key
+let provider = create_provider("anthropic", Some("sk-ant-..."))?;
+
+// Create with environment variable resolution
+let provider = create_provider("openai", None)?;
+
+// With custom URL (e.g., remote Ollama)
+let provider = create_provider_with_url("ollama", None, Some("http://10.0.0.5:11434"))?;
+```
+
+## Provider Comparison
+
+| Feature | OpenRouter | Anthropic | OpenAI | Ollama | Gemini |
+|---------|------------|-----------|--------|--------|--------|
+| **Native Tools** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Streaming** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Prompt Caching** | Via upstream | ✅ Auto | ❌ | N/A | ✅ |
+| **Local Hosting** | ❌ | ❌ | ❌ | ✅ | ❌ |
+| **Model Access** | 100+ | Claude only | GPT only | Any GGUF | Gemini only |
+| **Cost** | Varies | ~$3-15/M tokens | ~$2.50-15/M tokens | Free | Free tier |
+| **Setup Complexity** | Low | Low | Low | Medium | Medium |
+
+## Resilient Provider Chain
+
+Corvus supports automatic failover with the `create_resilient_provider` factory from `~/workspace/source/clients/agent-runtime/src/providers/mod.rs:573`:
+
+```toml
+[runtime]
+provider = "anthropic"
+
+[runtime.reliability]
+fallback_providers = ["openrouter", "openai"]
+provider_retries = 3
+provider_backoff_ms = 1000
+```
+
+This creates a provider chain that:
+1. Tries primary provider (Anthropic)
+2. On failure, tries fallback providers in order
+3. Retries with exponential backoff
+4. Logs failures for observability
+
+## Model Routing
+
+Route specific models to different providers:
+
+```toml
+[[runtime.model_routes]]
+hint = "sonnet"
+provider = "anthropic"
+model = "claude-3-5-sonnet-20241022"
+
+[[runtime.model_routes]]
+hint = "gpt-4o"
+provider = "openai"
+model = "gpt-4o"
+
+[[runtime.model_routes]]
+hint = "local"
+provider = "ollama"
+model = "qwen2.5-coder:32b"
+```
+
+## Best Practices
+
+1. **Use environment variables** for API keys instead of config files
+2. **Enable fallback providers** for production deployments
+3. **Use OpenRouter** for access to multiple models with one API key
+4. **Use Ollama** for local development and privacy-sensitive workloads
+5. **Enable prompt caching** (Anthropic) for long system prompts
+6. **Set appropriate timeouts** for slow providers (default: 120s)
+7. **Call `warmup()`** during initialization to pre-establish connections
+
+## See Also
+
+- [OpenAI Provider Configuration](/guides/providers/openai)
+- [Anthropic Provider Configuration](/guides/providers/anthropic)
+- [Custom Provider Setup](/guides/providers/custom)
+- [Tool Calling Guide](/guides/tools/overview)
+- [Configuration Reference](/reference/configuration)

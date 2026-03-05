@@ -1,80 +1,351 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get your first Corvus agent running in under 5 minutes
 ---
 
-## Get started in three steps
+# Quickstart
 
-Get your documentation site running locally and make your first customization.
+Get up and running with Corvus in less than 5 minutes. This guide will walk you through installation, configuration, and your first agent interaction.
 
-### Step 1: Set up your local environment
+<Note>
+  This quickstart uses the npm distribution for fastest setup. For other installation methods, see the [Installation](/installation) guide.
+</Note>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- **Node.js 18+** (for npm installation)
+- An **API key** from a supported AI provider (OpenRouter, OpenAI, Anthropic, etc.)
+- **5 minutes** of your time
+
+## Step-by-Step Setup
+
+<Steps>
+  <Step title="Install Corvus">
+    Use npx to run Corvus without global installation:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    ```bash
+    npx @dallay/corvus --help
+    ```
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    Or install globally for persistent access:
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    <CodeGroup>
+    ```bash npm
+    npm install -g @dallay/corvus
+    ```
+    
+    ```bash pnpm
+    pnpm add -g @dallay/corvus
+    ```
+    
+    ```bash yarn
+    yarn global add @dallay/corvus
+    ```
+    
+    ```bash bun
+    bun add -g @dallay/corvus
+    ```
+    </CodeGroup>
+    
+    <Note>
+      The npm package downloads and manages the appropriate Rust binary for your platform automatically.
+    </Note>
+  </Step>
+  
+  <Step title="Run the Onboarding Wizard">
+    Initialize your Corvus configuration with the interactive setup wizard:
+    
+    ```bash
+    corvus onboard --interactive
+    ```
+    
+    The wizard will guide you through:
+    
+    1. **Provider Selection**: Choose your AI model provider (OpenRouter, OpenAI, Anthropic, Ollama, etc.)
+    2. **API Key Setup**: Enter your API key (stored encrypted in `~/.corvus/config.toml`)
+    3. **Model Configuration**: Select your default model and temperature
+    4. **Memory Backend**: Choose between SQLite, SurrealDB, or Markdown
+    5. **Security Settings**: Configure gateway pairing and workspace scoping
+    6. **Channel Setup**: Configure messaging integrations (optional)
+    7. **Tool Allowlists**: Define which tools and commands the agent can use
+    
+    <Accordion title="Quick setup (non-interactive)">
+      If you want to skip the wizard, use the quick setup mode:
+      
+      ```bash
+      corvus onboard --api-key sk-... --provider openrouter
+      ```
+      
+      This creates a minimal configuration with secure defaults.
+    </Accordion>
+  </Step>
+  
+  <Step title="Verify Installation">
+    Check that Corvus is properly configured:
+    
+    ```bash
+    corvus status
+    ```
+    
+    Expected output:
+    
+    ```
+    Corvus v0.2.2
+    
+    Configuration:
+    ✓ Config file: ~/.corvus/config.toml
+    ✓ Provider: openrouter
+    ✓ Model: anthropic/claude-sonnet-4-20250514
+    ✓ Memory: sqlite (auto_save: true)
+    ✓ Workspace: ~/corvus-workspace
+    
+    System Status:
+    ✓ Gateway: Not running
+    ✓ Daemon: Not running
+    ✓ Channels: 0 configured
+    ```
+    
+    <Warning>
+      If you see any errors, run `corvus doctor` to diagnose and fix common issues.
+    </Warning>
+  </Step>
+  
+  <Step title="Chat with Your First Agent">
+    Send your first message to the agent:
+    
+    ```bash
+    corvus agent -m "Hello, Corvus! What can you help me with?"
+    ```
+    
+    Expected output:
+    
+    ```
+    🐦‍⬛ Corvus v0.2.2
+    
+    User: Hello, Corvus! What can you help me with?
+    
+    Assistant: Hello! I'm Corvus, your AI assistant. I can help you with:
+    
+    • Code analysis and generation
+    • File operations (reading, writing, searching)
+    • Running shell commands safely
+    • Managing your project workspace
+    • Searching the web and retrieving information
+    • Storing and recalling important context
+    
+    I operate with strict security controls - I'm scoped to your workspace
+    and will ask for permission before executing commands. What would you
+    like help with today?
+    ```
+    
+    <Note>
+      The agent has access to tools like `shell`, `file_read`, `file_write`, and `memory_store`. It will ask for permission before executing potentially dangerous operations.
+    </Note>
+  </Step>
+  
+  <Step title="Try Interactive Mode">
+    For a conversational experience, launch interactive mode:
+    
+    ```bash
+    corvus agent
+    ```
+    
+    This starts a REPL where you can have multi-turn conversations:
+    
+    ```
+    🐦‍⬛ Corvus v0.2.2 - Interactive Mode
+    Type 'exit' or Ctrl+D to quit
+    
+    You: List all markdown files in the current directory
+    
+    Assistant: I'll search for markdown files using the file_read tool.
+    [Tool: shell] ls *.md
+    
+    Found:
+    • README.md
+    • CONTRIBUTING.md
+    • CHANGELOG.md
+    
+    You: Read the README
+    
+    Assistant: [Tool: file_read] README.md
+    
+    The README contains...
+    ```
+    
+    Press **Ctrl+D** or type **exit** to quit.
+  </Step>
+</Steps>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Next Steps
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+Now that you have Corvus running, explore these features:
 
 <CardGroup cols={2}>
+  <Card title="Start the Gateway" icon="server">
+    Run the webhook server for external integrations:
+    
+    ```bash
+    corvus gateway
+    ```
+    
+    Access at `http://127.0.0.1:8080`
+  </Card>
+  
+  <Card title="Enable Daemon Mode" icon="circle-play">
+    Start the autonomous runtime for background tasks:
+    
+    ```bash
+    corvus daemon
+    ```
+    
+    The daemon monitors channels and executes scheduled tasks.
+  </Card>
+  
+  <Card title="Configure Channels" icon="message">
+    Connect to Telegram, Discord, Slack, or WhatsApp:
+    
+    ```bash
+    corvus onboard --channels-only
+    ```
+    
+    See [Channel Configuration](/essentials/channels) for details.
+  </Card>
+  
+  <Card title="Install as Service" icon="gear">
+    Run Corvus as a background service:
+    
+    ```bash
+    corvus service install
+    corvus service start
+    ```
+    
+    Useful for always-on deployments.
+  </Card>
+</CardGroup>
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+## Common Commands
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+Here are the most frequently used Corvus commands:
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+| Command | Description |
+|---------|-------------|
+| `corvus agent -m "..."` | Send a single message to the agent |
+| `corvus agent` | Start interactive chat mode |
+| `corvus gateway` | Start webhook server (default: `127.0.0.1:8080`) |
+| `corvus daemon` | Start autonomous runtime |
+| `corvus status` | Show system status |
+| `corvus doctor` | Run system diagnostics |
+| `corvus service install` | Install background service |
+| `corvus onboard --channels-only` | Reconfigure channels only |
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+## Configuration File
 
+Your configuration is stored at `~/.corvus/config.toml`. Here's a minimal example:
+
+```toml
+api_key = "sk-..."
+default_provider = "openrouter"
+default_model = "anthropic/claude-sonnet-4-20250514"
+default_temperature = 0.7
+
+[memory]
+backend = "sqlite"
+auto_save = true
+embedding_provider = "openai"
+vector_weight = 0.7
+keyword_weight = 0.3
+
+[autonomy]
+level = "supervised"        # "readonly", "supervised", or "full"
+workspace_only = true
+allowed_commands = ["git", "npm", "cargo", "ls", "cat", "grep"]
+
+[gateway]
+require_pairing = true
+allow_public_bind = false
+
+[runtime]
+kind = "native"             # "native" or "docker"
+```
+
+<Accordion title="View full configuration options">
+  See the [Configuration Reference](/essentials/configuration) for all available options including:
+  
+  - Docker sandboxing
+  - SurrealDB memory backend
+  - Tunnel providers (Cloudflare, Tailscale, ngrok)
+  - Browser automation
+  - AIEOS identity format
+  - Composio integrations
+</Accordion>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Command not found: corvus">
+    If you used npx without global installation, prefix commands with `npx @dallay/corvus`:
+    
+    ```bash
+    npx @dallay/corvus agent -m "Hello"
+    ```
+    
+    Or install globally:
+    
+    ```bash
+    npm install -g @dallay/corvus
+    ```
+  </Accordion>
+  
+  <Accordion title="API key errors">
+    Ensure your API key is valid and has the correct permissions:
+    
+    ```bash
+    corvus onboard --api-key YOUR_KEY --provider openrouter
+    ```
+    
+    The key is stored encrypted in `~/.corvus/config.toml`.
+  </Accordion>
+  
+  <Accordion title="Permission denied errors">
+    Corvus operates with workspace scoping by default. If you see permission errors:
+    
+    1. Check that you're operating within your workspace directory
+    2. Review forbidden paths in config: `autonomy.forbidden_paths`
+    3. Verify allowed commands: `autonomy.allowed_commands`
+    
+    Run `corvus doctor` for detailed diagnostics.
+  </Accordion>
+  
+  <Accordion title="Binary not found (npm installation)">
+    The npm package should automatically download the correct binary for your platform. If it fails:
+    
+    1. Check your Node.js version: `node --version` (requires 18+)
+    2. Manually clear npm cache: `npm cache clean --force`
+    3. Reinstall: `npm uninstall -g @dallay/corvus && npm install -g @dallay/corvus`
+    
+    Alternatively, install from source with Cargo (see [Installation](/installation)).
+  </Accordion>
+</AccordionGroup>
+
+## What's Next?
+
+<CardGroup cols={3}>
+  <Card title="Installation Guide" icon="download" href="/installation">
+    Explore all installation methods including Cargo and binary downloads
+  </Card>
+  
+  <Card title="Development" icon="code" href="/guides/deployment">
+    Learn how to extend Corvus with custom tools and providers
+  </Card>
+  
+  <Card title="API Reference" icon="book" href="/api/traits/provider">
+    Dive into the complete API documentation
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Need Help?** Join the [Corvus community](https://github.com/dallay/corvus/discussions) or [report an issue](https://github.com/dallay/corvus/issues).
 </Note>

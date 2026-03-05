@@ -1,0 +1,272 @@
+---
+title: Channels Overview
+description: Learn about Corvus channels for multi-platform agent communication
+---
+
+Channels are Corvus's messaging interfaces that allow your AI agent to communicate across multiple platforms simultaneously. Each channel implements a common `Channel` trait, providing a unified API for sending and receiving messages.
+
+## Channel Trait Interface
+
+All channels implement the core `Channel` trait defined in `clients/agent-runtime/src/channels/traits.rs`:
+
+```rust
+pub trait Channel: Send + Sync {
+    /// Human-readable channel name
+    fn name(&self) -> &str;
+
+    /// Send a message through this channel
+    async fn send(&self, message: &SendMessage) -> anyhow::Result<()>;
+
+    /// Start listening for incoming messages (long-running)
+    async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()>;
+
+    /// Check if channel is healthy
+    async fn health_check(&self) -> bool;
+
+    /// Signal that the bot is processing (typing indicator)
+    async fn start_typing(&self, recipient: &str) -> anyhow::Result<()>;
+
+    /// Stop typing indicator
+    async fn stop_typing(&self, recipient: &str) -> anyhow::Result<()>;
+
+    /// Whether this channel supports progressive message updates
+    fn supports_draft_updates(&self) -> bool;
+
+    /// Send an initial draft message
+    async fn send_draft(&self, message: &SendMessage) -> anyhow::Result<Option<String>>;
+
+    /// Update a previously sent draft message
+    async fn update_draft(&self, recipient: &str, message_id: &str, text: &str) -> anyhow::Result<()>;
+
+    /// Finalize a draft with the complete response
+    async fn finalize_draft(&self, recipient: &str, message_id: &str, text: &str) -> anyhow::Result<()>;
+}
+```
+
+## Message Types
+
+### ChannelMessage
+
+Represents an incoming message from a channel:
+
+```rust
+pub struct ChannelMessage {
+    pub id: String,           // Unique message ID
+    pub sender: String,       // Sender identifier
+    pub reply_target: String, // Where to send the reply
+    pub content: String,      // Message text content
+    pub channel: String,      // Channel name (e.g., "telegram")
+    pub timestamp: u64,       // Unix timestamp
+}
+```
+
+### SendMessage
+
+Represents an outgoing message to send:
+
+```rust
+pub struct SendMessage {
+    pub content: String,         // Message content
+    pub recipient: String,       // Recipient identifier
+    pub subject: Option<String>, // Optional subject (for email)
+}
+```
+
+## Supported Channels
+
+Corvus supports a wide variety of messaging platforms:
+
+### Real-Time Channels
+- **CLI** - Command-line interface (stdin/stdout)
+- **Telegram** - Telegram bot via long-polling
+- **Discord** - Discord bot via WebSocket Gateway
+- **Slack** - Slack bot via WebSocket API
+- **iMessage** - macOS iMessage integration
+- **Matrix** - Matrix protocol client
+
+### Webhook-Based Channels
+- **WhatsApp** - WhatsApp Business Cloud API (Meta)
+- **Webhook** - Generic HTTP webhook receiver
+
+### Enterprise Channels
+- **Lark** - ByteDance Lark/Feishu
+- **DingTalk** - Alibaba DingTalk
+- **QQ** - Tencent QQ
+- **Mattermost** - Self-hosted Mattermost
+
+### Legacy Channels
+- **IRC** - Internet Relay Chat
+- **Signal** - Signal messaging via signal-cli
+- **Email** - SMTP/IMAP email integration
+
+## Allowlist Security Model
+
+All channels use an **allowlist-based security model** to control who can interact with your agent:
+
+### Configuration Pattern
+
+Each channel has an `allowed_users` or `allowed_numbers` field:
+
+```toml
+[channels_config.telegram]
+bot_token = "YOUR_BOT_TOKEN"
+allowed_users = ["alice", "bob", "123456789"]  # Usernames or user IDs
+
+[channels_config.discord]
+bot_token = "YOUR_BOT_TOKEN"
+allowed_users = ["987654321098765432"]  # Discord user IDs
+
+[channels_config.whatsapp]
+access_token = "YOUR_ACCESS_TOKEN"
+phone_number_id = "YOUR_PHONE_ID"
+allowed_numbers = ["+1234567890"]  # E.164 format
+```
+
+### Wildcard Access
+
+Use `"*"` to allow all users (not recommended for production):
+
+```toml
+allowed_users = ["*"]
+```
+
+### Empty Allowlist
+
+An empty allowlist denies everyone by default - you must explicitly add users.
+
+### Identity Formats
+
+- **Telegram**: Username (without `@`) or numeric user ID
+- **Discord**: Numeric user ID (snowflake ID)
+- **WhatsApp**: Phone number in E.164 format (`+1234567890`)
+- **Slack**: User ID from Slack API
+- **CLI**: Always allows `"user"`
+
+## Common Patterns
+
+### Starting Channels
+
+Start all configured channels in daemon mode:
+
+```bash
+corvus channel start
+```
+
+This starts a long-running process that listens to all configured channels and processes messages.
+
+### Health Checks
+
+Verify channel connectivity and authentication:
+
+```bash
+corvus channel doctor
+```
+
+Output shows health status for each channel:
+
+```
+🩺 Corvus Channel Doctor
+
+  ✅ Telegram  healthy
+  ✅ Discord   healthy
+  ❌ Slack     unhealthy (auth/config/network)
+  ⏱️  WhatsApp  timed out (>10s)
+```
+
+### Listing Channels
+
+See which channels are configured:
+
+```bash
+corvus channel list
+```
+
+### Binding Users (Telegram)
+
+For Telegram, you can bind a user from the CLI:
+
+```bash
+corvus channel bind-telegram alice
+```
+
+Or users can bind themselves with a pairing code:
+
+```
+/bind <pairing-code>
+```
+
+## Channel-Specific Features
+
+### Draft Updates
+
+Some channels support progressive message updates (streaming):
+
+- **Telegram**: Supported (editable messages)
+- **Discord**: Limited (typing indicator only)
+- **CLI**: No (instant output)
+- **WhatsApp**: No (webhook-based)
+
+Configure streaming for Telegram:
+
+```toml
+[channels_config.telegram]
+bot_token = "YOUR_TOKEN"
+stream_mode = "full"  # Options: "off", "full"
+draft_update_interval_ms = 1000  # Throttle edit frequency
+```
+
+### Typing Indicators
+
+Channels send typing indicators while processing:
+
+- **Telegram**: `sendChatAction` with `"typing"`
+- **Discord**: `POST /channels/{id}/typing`
+- **Slack**: Slack WebSocket typing event
+
+### Message Splitting
+
+Long messages are automatically split to respect platform limits:
+
+- **Telegram**: 4096 characters
+- **Discord**: 2000 characters
+- **WhatsApp**: 4096 characters
+
+The runtime automatically chunks messages at word boundaries.
+
+## Configuration Example
+
+Complete multi-channel configuration in `~/.corvus/config.toml`:
+
+```toml
+[channels_config.telegram]
+bot_token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+allowed_users = ["alice", "bob"]
+stream_mode = "full"
+draft_update_interval_ms = 1000
+
+[channels_config.discord]
+bot_token = "MTE1..."
+guild_id = "123456789012345678"
+allowed_users = ["987654321098765432"]
+listen_to_bots = false
+mention_only = true
+
+[channels_config.whatsapp]
+access_token = "EAAxxxx"
+phone_number_id = "123456789"
+verify_token = "my-secret-verify-token"
+allowed_numbers = ["+1234567890"]
+```
+
+## Next Steps
+
+- [Telegram Setup](/guides/channels/telegram) - Configure Telegram bot with BotFather
+- [Discord Setup](/guides/channels/discord) - Create Discord application and bot
+- [WhatsApp Setup](/guides/channels/whatsapp) - Set up Meta Business Cloud API
+- [CLI Usage](/guides/channels/cli) - Use the command-line interface
+
+## Reference
+
+- Source: `clients/agent-runtime/src/channels/`
+- Trait definition: `clients/agent-runtime/src/channels/traits.rs`
+- Channel implementations: `clients/agent-runtime/src/channels/{telegram,discord,whatsapp,cli}.rs`

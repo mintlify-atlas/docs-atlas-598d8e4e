@@ -1,0 +1,359 @@
+---
+title: Discord Channel
+description: Set up and configure Discord bot for Corvus agent
+---
+
+The Discord channel allows your Corvus agent to interact with users via Discord bots using the Discord Gateway WebSocket API.
+
+## Features
+
+- Real-time WebSocket connection via Discord Gateway
+- User ID-based allowlist (snowflake IDs)
+- Guild (server) filtering
+- Mention-only mode
+- Typing indicators
+- Message splitting (2000 char limit)
+- Bot message filtering
+- Automatic reconnection
+
+## Discord Bot Application Setup
+
+### 1. Create Application
+
+1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
+2. Click **New Application**
+3. Enter application name (e.g., "Corvus AI")
+4. Click **Create**
+
+### 2. Create Bot User
+
+1. In your application, navigate to **Bot** tab
+2. Click **Add Bot** → **Yes, do it!**
+3. **Reset Token** and copy the bot token:
+   ```
+   MTE1NjI0ODQ5OTc3MzYyODQxNg.GXXXxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+4. Enable required **Privileged Gateway Intents**:
+   - ✅ **Message Content Intent** (required to read message content)
+   - ✅ **Server Members Intent** (optional, for member info)
+   - ✅ **Presence Intent** (optional, for status)
+
+### 3. Configure Bot Permissions
+
+1. Navigate to **OAuth2** → **URL Generator**
+2. Select scopes:
+   - ✅ `bot`
+   - ✅ `applications.commands` (if using slash commands later)
+3. Select bot permissions:
+   - ✅ `Read Messages/View Channels`
+   - ✅ `Send Messages`
+   - ✅ `Read Message History`
+4. Copy the generated URL
+
+### 4. Invite Bot to Server
+
+1. Paste the OAuth2 URL in your browser
+2. Select your server from the dropdown
+3. Click **Authorize**
+4. Complete the captcha
+
+### 5. Get User and Guild IDs
+
+**Enable Developer Mode** in Discord:
+- User Settings → Advanced → Developer Mode (toggle on)
+
+**Get User ID**:
+- Right-click your username → Copy User ID
+- Example: `987654321098765432`
+
+**Get Guild (Server) ID**:
+- Right-click server icon → Copy Server ID
+- Example: `123456789012345678`
+
+## Configuration
+
+Add Discord configuration to `~/.corvus/config.toml`:
+
+```toml
+[channels_config.discord]
+bot_token = "MTE1NjI0ODQ5OTc3MzYyODQxNg.GXXXxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+guild_id = "123456789012345678"  # Optional: restrict to one server
+allowed_users = ["987654321098765432", "111222333444555666"]
+listen_to_bots = false
+mention_only = true
+```
+
+### Configuration Options
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `bot_token` | String | Yes | Bot token from Discord Developer Portal |
+| `guild_id` | String | No | Restrict bot to specific server (omit for all servers/DMs) |
+| `allowed_users` | Array | Yes | List of allowed Discord user IDs (snowflakes) |
+| `listen_to_bots` | Boolean | No | Whether to respond to other bots (default: `false`) |
+| `mention_only` | Boolean | No | Require bot mention to trigger response (default: `false`) |
+
+### Allowlist: User IDs Only
+
+Discord uses **numeric snowflake IDs** for users. You must use user IDs (not usernames):
+
+```toml
+allowed_users = ["987654321098765432", "111222333444555666"]
+```
+
+**Why?**
+- Usernames can change and are not unique
+- Snowflake IDs are permanent and globally unique
+
+**Wildcard** (allow anyone):
+
+```toml
+allowed_users = ["*"]
+```
+
+## Mention-Only Mode
+
+When `mention_only = true`, users must mention the bot to trigger a response:
+
+```
+@CorvusBot what's the weather?
+```
+
+The bot will:
+1. Check if message contains `<@BOT_ID>` or `<@!BOT_ID>` (mention tags)
+2. Strip mention tags from content before processing
+3. Ignore messages without mentions
+
+**Use cases:**
+- Shared channels (avoid triggering on every message)
+- Group chats (only respond when explicitly called)
+
+## Guild (Server) Filtering
+
+Restrict bot to a specific Discord server:
+
+```toml
+guild_id = "123456789012345678"
+```
+
+- **Omit `guild_id`**: Bot responds in all servers and DMs
+- **Set `guild_id`**: Bot only responds in that specific server (DMs still work)
+
+## Channel/Server Permissions
+
+The bot needs these permissions in each channel:
+
+| Permission | Required | Reason |
+|------------|----------|--------|
+| `View Channel` | Yes | Read messages in channel |
+| `Send Messages` | Yes | Reply to users |
+| `Read Message History` | Yes | Access message context |
+| `Use External Emojis` | Optional | Rich responses |
+| `Attach Files` | Optional | Send attachments |
+| `Embed Links` | Optional | Rich link previews |
+
+**Verify Permissions:**
+
+1. Right-click channel → Edit Channel
+2. Navigate to **Permissions** tab
+3. Add bot role and grant required permissions
+
+## Testing and Verification
+
+### 1. Start Channel Listener
+
+```bash
+corvus channel start
+```
+
+Expected output:
+```
+💬 Starting channels...
+  ✅ Discord connected
+Discord: connecting to gateway...
+Discord: connected and identified
+```
+
+### 2. Health Check
+
+Verify bot authentication:
+
+```bash
+corvus channel doctor
+```
+
+Expected output:
+```
+🩺 Corvus Channel Doctor
+
+  ✅ Discord  healthy
+```
+
+### 3. Send Test Message
+
+**Mention-only mode enabled:**
+```
+@CorvusBot hello
+```
+
+**Mention-only mode disabled:**
+```
+hello
+```
+
+The bot should respond via the LLM if you're in the allowlist.
+
+## Advanced Features
+
+### Typing Indicators
+
+While processing, Discord shows "Bot is typing..." via:
+
+```rust
+POST /channels/{channel_id}/typing
+```
+
+Corvus refreshes typing indicator every 8 seconds (Discord expires after 10s).
+
+### Message Splitting
+
+Discord limits messages to **2000 characters**. Corvus automatically splits long responses:
+
+- Prefers splitting at newlines
+- Falls back to spaces
+- Hard splits at 2000-char boundary if no break point
+
+```
+First chunk of response...
+```
+
+```
+Second chunk of response...
+```
+
+Splits happen with a 500ms delay between chunks to avoid rate limits.
+
+### Direct Messages (DMs)
+
+The bot responds to DMs if:
+
+1. User is in `allowed_users`
+2. User shares at least one server with the bot
+3. User has not blocked the bot
+
+Note: `guild_id` filter does not apply to DMs.
+
+### Ignoring Bot Messages
+
+By default, `listen_to_bots = false` prevents the bot from responding to other bots (including itself).
+
+Set to `true` if you want the bot to process messages from other bots (e.g., webhook integrations).
+
+## Troubleshooting
+
+### Bot Not Responding
+
+**1. Check Allowlist:**
+
+Ensure your user ID is in the allowlist:
+
+```bash
+grep allowed_users ~/.corvus/config.toml
+```
+
+**2. Verify Developer Mode and User ID:**
+
+Right-click username → Copy User ID. Example: `987654321098765432`
+
+**3. Check Message Content Intent:**
+
+In Discord Developer Portal → Bot → Privileged Gateway Intents:
+- ✅ **Message Content Intent** must be enabled
+
+**4. Check Mention-Only Mode:**
+
+If `mention_only = true`, you must mention the bot:
+
+```
+@CorvusBot your message here
+```
+
+### Invalid Token Error
+
+```
+Discord: API error (401): Unauthorized
+```
+
+**Cause**: Bot token is incorrect or expired.
+
+**Solution**: Reset token in Discord Developer Portal:
+
+1. Go to Bot tab
+2. Click **Reset Token**
+3. Copy new token and update `config.toml`
+
+### Missing Permissions
+
+```
+Discord send message failed (403): Missing Permissions
+```
+
+**Cause**: Bot lacks channel permissions.
+
+**Solution**: Grant required permissions:
+
+1. Right-click channel → Edit Channel
+2. Permissions → Add bot role
+3. Enable `Send Messages`, `View Channel`, `Read Message History`
+
+### Gateway Disconnect
+
+```
+Discord: received Reconnect (op 7), closing for restart
+```
+
+**Cause**: Discord Gateway requests reconnection (normal behavior).
+
+**Solution**: Corvus automatically reconnects via supervised listener.
+
+### Rate Limiting
+
+Discord enforces rate limits:
+
+- 5 messages per 5 seconds per channel
+- Typing indicator: once per 10 seconds
+
+Corvus adds 500ms delay between message chunks to avoid hitting limits.
+
+## Security Best Practices
+
+1. **Use User IDs**: Always use snowflake IDs, never usernames or nicknames
+2. **Keep Token Secret**: Never commit bot token to version control
+3. **Empty Allowlist by Default**: Start with `allowed_users = []` and explicitly add users
+4. **Enable Mention-Only**: Use `mention_only = true` in shared channels
+5. **Restrict Guild**: Set `guild_id` to limit bot to your server
+6. **Monitor Logs**: Watch for unauthorized access attempts
+7. **Rotate Tokens**: Reset token in Discord Developer Portal if compromised
+
+## Message ID Format
+
+Discord message IDs follow the format:
+
+```
+discord_{snowflake_id}
+```
+
+Example: `discord_123456789012345678`
+
+This format:
+- Is deterministic (same message = same ID)
+- Prevents duplicate processing after restart
+- Uses Discord's snowflake ID for traceability
+
+## Reference
+
+- Source: `clients/agent-runtime/src/channels/discord.rs`
+- Discord Developer Portal: https://discord.com/developers/applications
+- Discord Gateway API: https://discord.com/developers/docs/topics/gateway
+- Discord API Reference: https://discord.com/developers/docs/reference
+- Line range: `discord.rs:1-842`

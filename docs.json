@@ -1,122 +1,106 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Corvus",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#ffffff",
+    "light": "#6CA9E2",
+    "dark": "#6CA9E2"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/f7463634-e532-4ad6-bc31-85f86f631bdd.svg",
+  "logo": {
+    "light": "https://media.brand.dev/f7463634-e532-4ad6-bc31-85f86f631bdd.svg",
+    "dark": "https://media.brand.dev/f7463634-e532-4ad6-bc31-85f86f631bdd.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/dallay/corvus"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/dallay/corvus"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
-            "pages": [
-              "index",
-              "quickstart",
-              "development"
-            ]
+            "group": "Getting Started",
+            "pages": ["introduction", "quickstart", "installation"]
           },
           {
-            "group": "Customization",
-            "pages": [
-              "essentials/settings",
-              "essentials/navigation"
-            ]
+            "group": "Core Concepts",
+            "pages": ["architecture", "trait-system", "runtime-model", "security-model"]
           },
           {
-            "group": "Writing content",
-            "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
-            ]
+            "group": "Configuration",
+            "pages": ["configuration/overview", "configuration/providers", "configuration/channels", "configuration/memory", "configuration/security"]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Guides",
         "groups": [
           {
-            "group": "API documentation",
-            "pages": [
-              "api-reference/introduction"
-            ]
+            "group": "AI Providers",
+            "pages": ["guides/providers/overview", "guides/providers/openai", "guides/providers/anthropic", "guides/providers/custom"]
           },
           {
-            "group": "Endpoint examples",
-            "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
-            ]
+            "group": "Channels",
+            "pages": ["guides/channels/overview", "guides/channels/telegram", "guides/channels/discord", "guides/channels/whatsapp", "guides/channels/cli"]
+          },
+          {
+            "group": "Tools & Capabilities",
+            "pages": ["guides/tools/overview", "guides/tools/shell", "guides/tools/file-operations", "guides/tools/memory", "guides/tools/browser"]
+          },
+          {
+            "group": "Memory & Storage",
+            "pages": ["guides/memory/overview", "guides/memory/sqlite", "guides/memory/surrealdb", "guides/memory/embeddings"]
+          },
+          {
+            "group": "Security & Deployment",
+            "pages": ["guides/security/overview", "guides/security/sandbox", "guides/security/gateway", "guides/deployment"]
+          },
+          {
+            "group": "Advanced",
+            "pages": ["guides/identity/aieos", "guides/observability", "guides/troubleshooting"]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Traits",
+            "pages": ["api/traits/provider", "api/traits/channel", "api/traits/tool", "api/traits/memory", "api/traits/runtime"]
+          },
+          {
+            "group": "CLI",
+            "pages": ["api/cli/commands", "api/cli/agent", "api/cli/gateway", "api/cli/daemon"]
+          },
+          {
+            "group": "Configuration",
+            "pages": ["api/config/schema", "api/config/environment"]
+          }
+        ]
+      },
+      {
+        "tab": "Extend",
+        "groups": [
+          {
+            "group": "Building Extensions",
+            "pages": ["extend/overview", "extend/custom-provider", "extend/custom-channel", "extend/custom-tool", "extend/custom-memory"]
+          },
+          {
+            "group": "Examples",
+            "pages": ["extend/examples/provider", "extend/examples/channel", "extend/examples/tool"]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

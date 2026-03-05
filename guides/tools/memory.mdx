@@ -1,0 +1,255 @@
+---
+title: 'Memory Tools'
+description: 'Store, recall, and manage long-term agent memory'
+---
+
+# Memory Tools
+
+Corvus provides three memory tools that enable the agent to maintain long-term context across sessions:
+
+- `memory_store` — Save new memories
+- `memory_recall` — Search and retrieve memories
+- `memory_forget` — Delete specific memories
+
+All memory tools integrate with the configured memory backend (SQLite, SurrealDB, or Markdown).
+
+## memory_store
+
+Store a new memory entry with category and optional session scope.
+
+### Parameters
+
+<ParamField path="key" type="string" required>
+  Unique identifier for the memory (e.g., `user_preference_theme`)
+</ParamField>
+
+<ParamField path="content" type="string" required>
+  The memory content to store
+</ParamField>
+
+<ParamField path="category" type="string" default="core">
+  Memory category: `core`, `daily`, `conversation`, or custom
+</ParamField>
+
+### Example
+
+```json
+{
+  "key": "user_prefers_rust",
+  "content": "User strongly prefers Rust for system programming projects",
+  "category": "core"
+}
+```
+
+**Result:**
+
+```json
+{
+  "success": true,
+  "output": "Memory stored: user_prefers_rust",
+  "error": null
+}
+```
+
+## memory_recall
+
+Search memories using hybrid vector + keyword search.
+
+### Parameters
+
+<ParamField path="query" type="string" required>
+  Search query (natural language or keywords)
+</ParamField>
+
+<ParamField path="limit" type="number" default="5">
+  Maximum number of results to return
+</ParamField>
+
+### Search Algorithm
+
+From `src/memory/sqlite.rs` and `src/memory/vector.rs`:
+
+1. **Keyword Search**: FTS5 full-text search with BM25 scoring
+2. **Vector Search**: Cosine similarity on embeddings
+3. **Hybrid Merge**: Weighted combination (default: 70% vector, 30% keyword)
+
+```toml
+[memory]
+vector_weight = 0.7
+keyword_weight = 0.3
+```
+
+### Example
+
+```json
+{
+  "query": "programming language preferences",
+  "limit": 3
+}
+```
+
+**Result:**
+
+```json
+{
+  "success": true,
+  "output": "Found 2 memories:\n\n1. user_prefers_rust (score: 0.92)\nUser strongly prefers Rust for system programming projects\n\n2. tried_python_but_slow (score: 0.71)\nUser tried Python but found it too slow for their use case",
+  "error": null
+}
+```
+
+## memory_forget
+
+Delete a specific memory by key.
+
+### Parameters
+
+<ParamField path="key" type="string" required>
+  Key of the memory to delete
+</ParamField>
+
+### Example
+
+```json
+{"key": "outdated_preference"}
+```
+
+**Result:**
+
+```json
+{
+  "success": true,
+  "output": "Memory deleted: outdated_preference",
+  "error": null
+}
+```
+
+## Memory Categories
+
+From `src/memory/traits.rs:32-44`:
+
+```rust
+pub enum MemoryCategory {
+    /// Long-term facts, preferences, decisions
+    Core,
+    /// Daily session logs
+    Daily,
+    /// Conversation context
+    Conversation,
+    /// User-defined custom category
+    Custom(String),
+}
+```
+
+### Usage Guidelines
+
+| Category | Use For | Retention |
+|----------|---------|------------|
+| **core** | User preferences, long-term facts, decisions | Indefinite |
+| **daily** | Session logs, temporary notes | Auto-pruned after 30 days |
+| **conversation** | Current conversation context | Cleared per session |
+| **custom** | Project-specific memories | User-managed |
+
+## Auto-Save Mode
+
+When enabled, the agent automatically saves relevant context:
+
+```toml
+[memory]
+auto_save = true
+```
+
+The agent will:
+- Store important facts mentioned by the user
+- Save decisions and outcomes
+- Log errors and learnings
+
+## Session Scoping
+
+Memories can be scoped to a specific session:
+
+```rust
+memory.store(
+    "current_task",
+    "Implementing new feature X",
+    MemoryCategory::Conversation,
+    Some("session-abc-123"),
+).await?;
+```
+
+Session-scoped memories are automatically filtered during recall.
+
+## Backend Comparison
+
+| Backend | Vector Search | Keyword Search | Performance |
+|---------|---------------|----------------|-------------|
+| **SQLite** | ✅ (BLOB + cosine) | ✅ (FTS5 + BM25) | Fast (local) |
+| **SurrealDB** | ✅ (native vectors) | ✅ (full-text) | Fast (local/remote) |
+| **Markdown** | ❌ | ✅ (grep-based) | Slow (no indexing) |
+
+## Embedding Providers
+
+Vector search requires an embedding provider:
+
+```toml
+[memory]
+embedding_provider = "openai"  # or "noop" to disable vectors
+```
+
+From `src/memory/embeddings.rs:13-20`:
+
+```rust
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>>;
+    fn dimension(&self) -> usize;
+}
+```
+
+## Implementation Reference
+
+### memory_store (src/tools/memory_store.rs)
+
+```rust
+pub struct MemoryStoreTool {
+    memory: Arc<dyn Memory>,
+}
+
+#[async_trait]
+impl Tool for MemoryStoreTool {
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let key = args["key"].as_str()?;
+        let content = args["content"].as_str()?;
+        let category = parse_category(args["category"]);
+        
+        self.memory.store(key, content, category, None).await?;
+        
+        Ok(ToolResult {
+            success: true,
+            output: format!("Memory stored: {key}"),
+            error: None,
+        })
+    }
+}
+```
+
+## Best Practices
+
+<Tip>
+  Use descriptive keys with prefixes: `user_pref_theme`, `project_goal_Q1`, `decision_architecture_2026`
+</Tip>
+
+<Tip>
+  Store memories incrementally as facts are learned, not in bulk at end of session
+</Tip>
+
+<Warning>
+  Don't store sensitive data (passwords, API keys) in memory. Use config or secure storage.
+</Warning>
+
+## Related
+
+- [Memory Backends](/guides/memory/overview)
+- [SQLite Memory](/guides/memory/sqlite)
+- [SurrealDB Memory](/guides/memory/surrealdb)
+- [Embeddings](/guides/memory/embeddings)

@@ -1,0 +1,101 @@
+---
+title: 'Tools Overview'
+description: 'Built-in tools and capabilities for the Corvus agent runtime'
+---
+
+# Tools Overview
+
+Corvus ships with a powerful set of built-in tools that enable the AI agent to interact with the system, files, memory, and the web. Every tool is sandboxed and validated through the `SecurityPolicy`.
+
+## Architecture
+
+All tools implement the `Tool` trait from `src/tools/traits.rs`:
+
+```rust
+#[async_trait]
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn parameters_schema(&self) -> serde_json::Value;
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult>;
+    fn spec(&self) -> ToolSpec { /* ... */ }
+}
+```
+
+Each tool returns a `ToolResult`:
+
+```rust
+pub struct ToolResult {
+    pub success: bool,
+    pub output: String,
+    pub error: Option<String>,
+}
+```
+
+## Built-in Tools
+
+### Core Tools
+
+| Tool | Description | Security |
+|------|-------------|---------|
+| **shell** | Execute shell commands | Sandboxed, command allowlist, timeout |
+| **file_read** | Read file contents | Path validation, size limits |
+| **file_write** | Write file contents | Path validation, workspace-only |
+| **memory_store** | Save long-term memories | Category-based organization |
+| **memory_recall** | Search and retrieve memories | Hybrid vector + keyword search |
+| **memory_forget** | Delete specific memories | Key-based deletion |
+
+### Optional Tools
+
+| Tool | Description | Config Flag |
+|------|-------------|-------------|
+| **browser_open** | Open URLs in Brave browser | `browser.enabled = true` |
+| **composio** | Access 1000+ OAuth apps | `composio.enabled = true` |
+
+## Tool Execution Flow
+
+1. **LLM Request**: Model requests tool via function calling or text tags
+2. **Parameter Validation**: JSON schema validation via `parameters_schema()`
+3. **Security Check**: `SecurityPolicy` validates action (rate limits, allowlists, autonomy level)
+4. **Execution**: Tool runs in sandboxed context
+5. **Result**: `ToolResult` returned to LLM for next reasoning step
+
+## Rate Limiting
+
+All tools respect `max_actions_per_hour` from config:
+
+```rust
+if self.security.is_rate_limited() {
+    return Ok(ToolResult {
+        success: false,
+        error: Some("Rate limit exceeded".into()),
+        ..Default::default()
+    });
+}
+```
+
+## Tool Discovery
+
+The agent automatically registers all tools at startup. Tools are presented to the LLM via:
+
+- **Native tool calling** (OpenAI, Anthropic, Gemini formats)
+- **Prompt-guided fallback** (XML-style `<tool_call>` tags)
+
+See [Custom Tool Guide](/extend/custom-tool) to add your own tools.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Shell Tool" icon="terminal" href="/guides/tools/shell">
+    Execute commands safely
+  </Card>
+  <Card title="File Operations" icon="file" href="/guides/tools/file-operations">
+    Read and write files
+  </Card>
+  <Card title="Memory Tools" icon="brain" href="/guides/tools/memory">
+    Store and recall context
+  </Card>
+  <Card title="Browser Tool" icon="globe" href="/guides/tools/browser">
+    Web automation with Brave
+  </Card>
+</CardGroup>

@@ -1,0 +1,293 @@
+---
+title: 'Extension Overview'
+description: 'Build custom providers, channels, tools, and memory backends'
+icon: 'puzzle-piece'
+---
+
+# Extension Overview
+
+Corvus is designed for extreme extensibility. Every core subsystem is a **trait** — you can swap implementations with zero changes to the agent runtime.
+
+## Extension Points
+
+From README.md:
+
+| Subsystem | Trait | What You Can Build |
+|-----------|-------|--------------------|
+| **AI Models** | `Provider` | Custom LLM backends, local models, API wrappers |
+| **Channels** | `Channel` | Messaging platforms, custom protocols |
+| **Tools** | `Tool` | New capabilities, integrations, hardware drivers |
+| **Memory** | `Memory` | Storage backends, vector DBs, knowledge graphs |
+| **Runtime** | `RuntimeAdapter` | Execution environments (WASM, edge, embedded) |
+| **Observability** | `Observer` | Metrics, tracing, monitoring |
+
+## Architecture
+
+All extensions follow the same pattern:
+
+<Steps>
+  <Step title="Implement the Trait">
+    Create a struct that implements the trait (e.g., `Provider`, `Tool`)
+  </Step>
+  <Step title="Register in Factory">
+    Add your implementation to the factory module (e.g., `src/providers/mod.rs`)
+  </Step>
+  <Step title="Configure">
+    Add config options to `config.toml`
+  </Step>
+  <Step title="Use">
+    Agent automatically discovers and uses your extension
+  </Step>
+</Steps>
+
+## Quick Examples
+
+### Custom Provider (~30 lines)
+
+```rust
+use corvus::providers::traits::Provider;
+use async_trait::async_trait;
+
+pub struct MyProvider {
+    api_key: String,
+    client: reqwest::Client,
+}
+
+#[async_trait]
+impl Provider for MyProvider {
+    async fn chat_with_system(
+        &self,
+        system: Option<&str>,
+        message: &str,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<String> {
+        // Your API call here
+        Ok("response".into())
+    }
+}
+```
+
+### Custom Tool (~50 lines)
+
+```rust
+use corvus::tools::traits::{Tool, ToolResult};
+use async_trait::async_trait;
+
+pub struct MyTool;
+
+#[async_trait]
+impl Tool for MyTool {
+    fn name(&self) -> &str { "my_tool" }
+    
+    fn description(&self) -> &str {
+        "Does something useful"
+    }
+    
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "input": {"type": "string"}
+            },
+            "required": ["input"]
+        })
+    }
+    
+    async fn execute(&self, args: serde_json::Value) 
+        -> anyhow::Result<ToolResult> 
+    {
+        let input = args["input"].as_str().unwrap();
+        Ok(ToolResult {
+            success: true,
+            output: format!("Processed: {}", input),
+            error: None,
+        })
+    }
+}
+```
+
+### Custom Channel (~100 lines)
+
+```rust
+use corvus::channels::traits::{Channel, ChannelMessage, SendMessage};
+use async_trait::async_trait;
+
+pub struct MyChannel {
+    api_url: String,
+    client: reqwest::Client,
+}
+
+#[async_trait]
+impl Channel for MyChannel {
+    fn name(&self) -> &str { "my_channel" }
+    
+    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
+        // Send message via API
+        Ok(())
+    }
+    
+    async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) 
+        -> anyhow::Result<()> 
+    {
+        // Poll for incoming messages, send to tx
+        Ok(())
+    }
+}
+```
+
+## Extension Guidelines
+
+### 1. Security First
+
+<Warning>
+  **Always validate inputs** before executing. Don't trust LLM-provided parameters.
+</Warning>
+
+- Validate and sanitize all inputs
+- Use parameterized queries (SQL, etc.)
+- Never log secrets or API keys
+- Implement rate limiting where applicable
+
+### 2. Error Handling
+
+<Tip>
+  Return errors via `Result` or structured error types. Never panic in production code.
+</Tip>
+
+```rust
+// Good
+let value = args["param"]
+    .as_str()
+    .ok_or_else(|| anyhow::anyhow!("Missing 'param'"))?;
+
+// Bad
+let value = args["param"].as_str().unwrap();  // can panic
+```
+
+### 3. Async Operations
+
+<Tip>
+  Use async/await for I/O operations. Never block the agent loop.
+</Tip>
+
+```rust
+#[async_trait]
+impl Tool for HttpTool {
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let resp = reqwest::get(url).await?;  // non-blocking
+        Ok(ToolResult::success(resp.text().await?))
+    }
+}
+```
+
+### 4. Testing
+
+<Tip>
+  Write tests for every extension. Use `#[tokio::test]` for async tests.
+</Tip>
+
+```rust
+#[tokio::test]
+async fn test_my_tool() {
+    let tool = MyTool::new();
+    let result = tool.execute(json!({"input": "test"})).await.unwrap();
+    assert!(result.success);
+}
+```
+
+## Example Extensions
+
+Corvus ships with working examples:
+
+<CardGroup cols={2}>
+  <Card title="Custom Provider" icon="brain" href="/extend/examples/provider">
+    Ollama local LLM integration
+  </Card>
+  <Card title="Custom Channel" icon="message" href="/extend/examples/channel">
+    Telegram bot integration
+  </Card>
+  <Card title="Custom Tool" icon="wrench" href="/extend/examples/tool">
+    HTTP GET tool
+  </Card>
+  <Card title="Custom Memory" icon="database" href="/extend/custom-memory">
+    In-memory backend
+  </Card>
+</CardGroup>
+
+## Development Workflow
+
+1. **Clone the repository**
+   
+   ```bash
+   git clone https://github.com/dallay/corvus.git
+   cd corvus/clients/agent-runtime
+   ```
+
+2. **Create your extension**
+   
+   ```bash
+   # Providers
+   touch src/providers/my_provider.rs
+   
+   # Tools
+   touch src/tools/my_tool.rs
+   
+   # Channels
+   touch src/channels/my_channel.rs
+   ```
+
+3. **Register in module**
+   
+   ```rust
+   // src/providers/mod.rs
+   pub mod my_provider;
+   
+   pub fn create_provider(name: &str, config: &Config) 
+       -> Result<Box<dyn Provider>> 
+   {
+       match name {
+           "my_provider" => Ok(Box::new(my_provider::MyProvider::new(config))),
+           // ...
+       }
+   }
+   ```
+
+4. **Test**
+   
+   ```bash
+   cargo test
+   ```
+
+5. **Use**
+   
+   ```toml
+   # ~/.corvus/config.toml
+   default_provider = "my_provider"
+   ```
+
+## Community Extensions
+
+Contributing extensions:
+
+1. Follow [Contributing Guidelines](https://github.com/dallay/corvus/blob/main/CONTRIBUTING.md)
+2. Add tests and documentation
+3. Submit a pull request
+4. Add to the [Extensions Registry](https://github.com/dallay/corvus-extensions)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Provider" icon="brain" href="/extend/custom-provider">
+    Build a custom LLM provider
+  </Card>
+  <Card title="Custom Channel" icon="message" href="/extend/custom-channel">
+    Build a custom messaging channel
+  </Card>
+  <Card title="Custom Tool" icon="wrench" href="/extend/custom-tool">
+    Build a custom tool
+  </Card>
+  <Card title="Custom Memory" icon="database" href="/extend/custom-memory">
+    Build a custom memory backend
+  </Card>
+</CardGroup>

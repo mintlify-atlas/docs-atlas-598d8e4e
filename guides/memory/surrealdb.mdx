@@ -1,0 +1,419 @@
+---
+title: 'SurrealDB Memory Backend'
+description: 'Graph-based memory with native vector search and relationships'
+---
+
+# SurrealDB Memory Backend
+
+SurrealDB is an optional memory backend that provides:
+
+- ✅ Native vector search (no BLOB storage needed)
+- ✅ Graph queries (relationships between memories)
+- ✅ Multi-node support (distributed memory)
+- ✅ Real-time subscriptions
+- ✅ SurrealQL (SQL-like query language)
+
+<Info>
+  SurrealDB support requires the `memory-surreal` feature flag:
+  
+  ```bash
+  cargo build --release --features memory-surreal
+  ```
+</Info>
+
+## Configuration
+
+```toml
+[memory]
+backend = "surreal"
+auto_save = true
+embedding_provider = "openai"
+vector_weight = 0.7
+keyword_weight = 0.3
+
+[memory.surreal]
+url = "http://127.0.0.1:8000"
+namespace = "corvus"
+database = "memory"
+allow_http_loopback = true
+```
+
+### Authentication
+
+**Option 1: Username/Password**
+
+```toml
+[memory.surreal]
+username = "corvus"
+password = "corvus-pass"
+```
+
+**Option 2: Token (preferred)**
+
+```toml
+[memory.surreal]
+token = "eyJ0eXAiOiJKV1QiLCJhbGc..."
+```
+
+**Option 3: Environment Variables**
+
+```bash
+export CORVUS_MEMORY_BACKEND=surreal
+export CORVUS_SURREALDB_URL=http://127.0.0.1:8000
+export CORVUS_SURREALDB_NAMESPACE=corvus
+export CORVUS_SURREALDB_DATABASE=memory
+export CORVUS_SURREALDB_TOKEN=eyJ0eXAi...
+```
+
+## Installation
+
+### Local Development
+
+```bash
+# Install SurrealDB
+curl -sSf https://install.surrealdb.com | sh
+
+# Start server
+surreal start --bind 127.0.0.1:8000 --user root --pass root memory.db
+```
+
+### Docker
+
+```bash
+docker run --rm -p 8000:8000 \
+  surrealdb/surrealdb:latest \
+  start --user root --pass root memory.db
+```
+
+### Production (TLS)
+
+```bash
+surreal start \
+  --bind 0.0.0.0:8000 \
+  --user admin \
+  --pass $SURREAL_PASS \
+  --strict \
+  --log info \
+  memory.db
+```
+
+## Schema
+
+From `src/memory/surreal.rs`:
+
+```sql
+-- Memories table with vector field
+DEFINE TABLE memories SCHEMAFULL;
+
+DEFINE FIELD id ON memories TYPE string;
+DEFINE FIELD key ON memories TYPE string;
+DEFINE FIELD content ON memories TYPE string;
+DEFINE FIELD category ON memories TYPE string DEFAULT 'core';
+DEFINE FIELD embedding ON memories TYPE array<float>;
+DEFINE FIELD session_id ON memories TYPE option<string>;
+DEFINE FIELD created_at ON memories TYPE datetime;
+DEFINE FIELD updated_at ON memories TYPE datetime;
+
+-- Unique index on key
+DEFINE INDEX unique_key ON memories FIELDS key UNIQUE;
+
+-- Index for category filtering
+DEFINE INDEX idx_category ON memories FIELDS category;
+
+-- Index for session filtering
+DEFINE INDEX idx_session ON memories FIELDS session_id;
+
+-- Full-text search index
+DEFINE INDEX idx_content ON memories FIELDS content SEARCH;
+```
+
+## Vector Search
+
+### Native Vector Support
+
+SurrealDB has first-class vector support:
+
+```sql
+SELECT *, vector::similarity::cosine(embedding, $query_vector) AS score
+FROM memories
+WHERE embedding IS NOT NONE
+  AND (session_id = $session OR $session IS NONE)
+ORDER BY score DESC
+LIMIT $limit;
+```
+
+**No manual serialization needed** — vectors are stored natively.
+
+## Graph Queries
+
+### Defining Relationships
+
+```sql
+-- Link memories together
+DEFINE TABLE relates_to SCHEMAFULL;
+DEFINE FIELD in ON relates_to TYPE record(memories);
+DEFINE FIELD out ON relates_to TYPE record(memories);
+DEFINE FIELD relation_type ON relates_to TYPE string;
+```
+
+### Creating Relationships
+
+```rust
+db.query(
+    "RELATE $from->relates_to->$to SET relation_type = $type"
+)
+.bind(("from", from_memory_id))
+.bind(("to", to_memory_id))
+.bind(("type", "depends_on"))
+.await?;
+```
+
+### Querying Graphs
+
+```sql
+-- Find all memories related to a key
+SELECT ->, ->relates_to->memories.* 
+FROM memories:user_prefers_rust;
+
+-- Multi-hop traversal
+SELECT ->(relates_to WHERE relation_type = 'depends_on')->memories.* 
+FROM memories:feature_x
+LIMIT 10;
+```
+
+## Hybrid Search Implementation
+
+From `src/memory/surreal.rs`:
+
+```rust
+pub async fn recall(
+    &self,
+    query: &str,
+    limit: usize,
+    session_id: Option<&str>,
+) -> anyhow::Result<Vec<MemoryEntry>> {
+    // 1. Get query embedding
+    let query_embedding = self.embedder.embed(query).await?;
+    
+    // 2. Vector search
+    let vector_results: Vec<_> = self.db
+        .query(
+            "SELECT *, vector::similarity::cosine(embedding, $vec) AS score
+             FROM memories
+             WHERE embedding IS NOT NONE
+               AND (session_id = $session OR $session IS NONE)
+             ORDER BY score DESC
+             LIMIT $limit"
+        )
+        .bind(("vec", query_embedding))
+        .bind(("session", session_id))
+        .bind(("limit", limit * 2))
+        .await?
+        .take(0)?;
+    
+    // 3. Keyword search
+    let keyword_results: Vec<_> = self.db
+        .query(
+            "SELECT *, search::score(1) AS score
+             FROM memories
+             WHERE content @@ $query
+               AND (session_id = $session OR $session IS NONE)
+             ORDER BY score DESC
+             LIMIT $limit"
+        )
+        .bind(("query", query))
+        .bind(("session", session_id))
+        .bind(("limit", limit * 2))
+        .await?
+        .take(0)?;
+    
+    // 4. Merge results
+    let merged = merge_search_results(
+        vector_results,
+        keyword_results,
+        self.vector_weight,
+        self.keyword_weight,
+        limit,
+    );
+    
+    Ok(merged)
+}
+```
+
+## Real-Time Subscriptions
+
+Subscribe to memory changes:
+
+```rust
+use surrealdb::Notification;
+
+let mut stream = db.select("memories").live().await?;
+
+while let Some(notification) = stream.next().await {
+    match notification {
+        Notification::Create(memory) => {
+            println!("New memory: {:?}", memory);
+        }
+        Notification::Update { old, new } => {
+            println!("Memory updated: {:?} -> {:?}", old, new);
+        }
+        Notification::Delete(memory) => {
+            println!("Memory deleted: {:?}", memory);
+        }
+    }
+}
+```
+
+## Multi-Node Setup
+
+### Cluster Configuration
+
+```bash
+# Node 1
+surreal start \
+  --bind 0.0.0.0:8000 \
+  --user admin --pass $PASS \
+  --kvs tikv://192.168.1.10:2379 \
+  memory
+
+# Node 2
+surreal start \
+  --bind 0.0.0.0:8000 \
+  --user admin --pass $PASS \
+  --kvs tikv://192.168.1.10:2379 \
+  memory
+```
+
+### Client Configuration
+
+Use load balancer or round-robin:
+
+```toml
+[memory.surreal]
+url = "http://loadbalancer.example.com:8000"
+```
+
+## Performance Tuning
+
+### Connection Pooling
+
+```rust
+use surrealdb::engine::remote::ws::Ws;
+use surrealdb::opt::auth::Root;
+
+let db = Surreal::new::<Ws>("127.0.0.1:8000")
+    .await?
+    .with_capacity(100)  // connection pool size
+    .await?;
+
+db.signin(Root {
+    username: "admin",
+    password: "pass",
+}).await?;
+
+db.use_ns("corvus").use_db("memory").await?;
+```
+
+### Batch Operations
+
+```rust
+let mut tx = db.transaction().await?;
+
+for memory in memories {
+    tx.create("memories")
+        .content(memory)
+        .await?;
+}
+
+tx.commit().await?;
+```
+
+## Backup and Restore
+
+### Export Database
+
+```bash
+surreal export \
+  --conn http://localhost:8000 \
+  --user root --pass root \
+  --ns corvus --db memory \
+  backup.surql
+```
+
+### Import Database
+
+```bash
+surreal import \
+  --conn http://localhost:8000 \
+  --user root --pass root \
+  --ns corvus --db memory \
+  backup.surql
+```
+
+## Comparison: SQLite vs SurrealDB
+
+| Feature | SQLite | SurrealDB |
+|---------|--------|------------|
+| **Setup** | Zero config | Requires server |
+| **Performance (local)** | Faster | Comparable |
+| **Performance (remote)** | N/A | 10-50ms latency |
+| **Vector search** | Manual (BLOB) | Native |
+| **Graph queries** | Not supported | First-class |
+| **Multi-node** | Not supported | Supported |
+| **Real-time** | Not supported | Live queries |
+| **Maintenance** | None | Server upkeep |
+
+## When to Use SurrealDB
+
+<Check>
+  **Use SurrealDB if you need:**
+  
+  - Graph relationships between memories
+  - Multi-node distributed memory
+  - Real-time memory updates
+  - Centralized memory across agents
+</Check>
+
+<Warning>
+  **Stick with SQLite if you want:**
+  
+  - Zero-config local storage
+  - Lowest latency (&lt;5ms)
+  - Single-node deployment
+  - Minimal operational overhead
+</Warning>
+
+## Troubleshooting
+
+### Connection Refused
+
+**Cause**: SurrealDB server not running
+
+**Solution**:
+
+```bash
+surreal start --bind 127.0.0.1:8000 --user root --pass root memory.db
+```
+
+### Authentication Failed
+
+**Cause**: Invalid credentials
+
+**Solution**: Check username/password or token in config
+
+### Slow Queries
+
+**Diagnosis**: Enable query logging
+
+```bash
+surreal start --log trace
+```
+
+**Solution**: Add indexes on filtered fields
+
+## Related
+
+- [Memory Overview](/guides/memory/overview)
+- [SQLite Backend](/guides/memory/sqlite)
+- [Embeddings](/guides/memory/embeddings)
+- [SurrealDB Docs](https://surrealdb.com/docs)

@@ -1,97 +1,128 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Corvus"
+description: "Fast, lightweight, and fully autonomous AI agent framework — deploy anywhere, swap any AI provider, and integrate seamlessly with major chat platforms."
 ---
 
-## Setting up
+<div className="flex flex-col items-center justify-center text-center py-12 px-4" style={{
+  background: 'linear-gradient(180deg, #0B1224 0%, rgba(11, 18, 36, 0.95) 100%)'
+}}>
+  <h1 className="text-5xl font-extrabold mb-4" style={{
+    background: 'linear-gradient(90deg, #4fc3f7 0%, #b388ff 100%)',
+    WebkitBackgroundClip: 'text',
+    WebkitTextFillColor: 'transparent',
+    backgroundClip: 'text'
+  }}>
+    The Fastest AI Agent Framework
+  </h1>
+  <p className="text-xl mb-8" style={{ color: '#E6E9F0' }}>
+    Ultra-lightweight Rust runtime. Trait-based architecture. Deploy anywhere.
+  </p>
+  <div className="flex gap-4 flex-wrap justify-center">
+    <a 
+      href="/quickstart"
+      className="px-6 py-3 rounded-md font-semibold transition-all hover:scale-105"
+      style={{
+        background: 'linear-gradient(90deg, #4fc3f7 0%, #b388ff 100%)',
+        color: '#ffffff'
+      }}
+    >
+      Get Started
+    </a>
+    <a 
+      href="https://github.com/dallay/corvus"
+      className="px-6 py-3 rounded-md font-semibold border transition-all hover:scale-105"
+      style={{
+        background: 'transparent',
+        color: '#ffffff',
+        borderColor: 'rgba(255, 255, 255, 0.2)'
+      }}
+    >
+      View on GitHub
+    </a>
+  </div>
+</div>
 
-Get your documentation site up and running in minutes.
+## Why Corvus?
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Ultra-Lightweight" icon="feather">
+    **&lt;5MB binary** with &lt;10ms startup time. 99% smaller than OpenClaw, runs on $10 hardware.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Trait-Based Architecture" icon="puzzle-piece">
+    Every subsystem is a **trait** — swap providers, channels, tools, memory, and runtimes with zero code changes.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="22+ AI Providers" icon="brain">
+    First-class support for OpenAI, Anthropic, OpenRouter, Ollama, and more. Add any **OpenAI-compatible** endpoint.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Secure by Design" icon="shield-check">
+    Gateway pairing, strict sandboxing, allowlists, and workspace scoping. **Security-first** at every layer.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Get Started
 
-Everything you need to create world-class documentation.
+<Steps>
+  <Step title="Install Corvus">
+    Install via npm, cargo, or download the binary directly.
+    
+    ```bash
+    npx @dallay/corvus --help
+    ```
+  </Step>
+  
+  <Step title="Run Setup Wizard">
+    Configure your API key and preferences with the interactive onboarding.
+    
+    ```bash
+    corvus onboard --interactive
+    ```
+  </Step>
+  
+  <Step title="Start Your Agent">
+    Launch the agent and start building autonomous workflows.
+    
+    ```bash
+    corvus agent -m "Hello, Corvus!"
+    ```
+  </Step>
+</Steps>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Core Features
 
-## Need inspiration?
+<CardGroup cols={3}>
+  <Card title="AI Providers" icon="microchip" href="/guides/providers/overview">
+    Connect to 22+ AI providers with unified trait interface
+  </Card>
+  <Card title="Messaging Channels" icon="messages" href="/guides/channels/overview">
+    Telegram, Discord, WhatsApp, Slack, and more
+  </Card>
+  <Card title="Tools & Capabilities" icon="wrench" href="/guides/tools/overview">
+    Shell, file operations, memory, browser automation
+  </Card>
+  <Card title="Hybrid Memory" icon="database" href="/guides/memory/overview">
+    Vector + keyword search with SQLite or SurrealDB
+  </Card>
+  <Card title="Secure Sandbox" icon="lock" href="/guides/security/overview">
+    Docker and native runtimes with strict policies
+  </Card>
+  <Card title="AIEOS Identity" icon="user-shield" href="/guides/identity/aieos">
+    Portable AI personas with AIEOS v1.1 standard
+  </Card>
+</CardGroup>
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+## Explore Documentation
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" icon="sitemap" href="/architecture">
+    Learn about Corvus's trait-based plugin system and runtime model
+  </Card>
+  <Card title="Configuration Guide" icon="gear" href="/configuration/overview">
+    Configure providers, channels, memory, and security settings
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/traits/provider">
+    Explore the core traits and CLI command reference
+  </Card>
+  <Card title="Extend Corvus" icon="plug" href="/extend/overview">
+    Build custom providers, channels, tools, and memory backends
+  </Card>
+</CardGroup>

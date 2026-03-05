@@ -1,0 +1,564 @@
+---
+title: Security Configuration
+description: Configure gateway security, autonomy levels, runtime sandboxing, and access controls
+---
+
+## Security Philosophy
+
+Corvus enforces security at **every layer** — not just the sandbox. The framework is designed with defense-in-depth:
+
+<Steps>
+  <Step title="Gateway Security">
+    Pairing codes, bearer tokens, localhost-only binding by default
+  </Step>
+  <Step title="Autonomy Controls">
+    Readonly, supervised, and full autonomy levels with explicit allowlists
+  </Step>
+  <Step title="Runtime Isolation">
+    Native, Docker, or sandboxed execution (Landlock, Firejail, Bubblewrap)
+  </Step>
+  <Step title="Filesystem Scoping">
+    Workspace-only access, forbidden path blocking, symlink escape detection
+  </Step>
+</Steps>
+
+## Gateway Security
+
+The gateway server requires pairing and authentication by default:
+
+```toml
+[gateway]
+port = 3000
+host = "127.0.0.1"  # Localhost-only by default
+require_pairing = true
+allow_public_bind = false
+
+# Rate limiting
+pair_rate_limit_per_minute = 10
+webhook_rate_limit_per_minute = 60
+trust_forwarded_headers = false
+
+# Idempotency
+idempotency_ttl_secs = 300
+idempotency_max_keys = 10000
+```
+
+### Pairing Flow
+
+<Steps>
+  <Step title="Start Gateway">
+    ```bash
+    corvus gateway
+    ```
+    
+    A 6-digit pairing code is displayed in the console.
+  </Step>
+  <Step title="Exchange Code for Token">
+    ```bash
+    curl -X POST http://127.0.0.1:3000/pair \
+      -H "X-Pairing-Code: 123456"
+    ```
+    
+    Returns a bearer token.
+  </Step>
+  <Step title="Use Bearer Token">
+    ```bash
+    curl -X POST http://127.0.0.1:3000/webhook \
+      -H "Authorization: Bearer <token>" \
+      -H "Content-Type: application/json" \
+      -d '{"message": "Hello"}'
+    ```
+  </Step>
+</Steps>
+
+### Configuration Fields
+
+<ParamField path="gateway.port" type="number" default={3000}>
+  Gateway port. Use `0` for random port (security-hardened mode).
+</ParamField>
+
+<ParamField path="gateway.host" type="string" default="127.0.0.1">
+  Gateway host binding:
+  - `127.0.0.1`: Localhost only (default, secure)
+  - `0.0.0.0`: All interfaces (requires tunnel or `allow_public_bind`)
+</ParamField>
+
+<ParamField path="gateway.require_pairing" type="boolean" default={true}>
+  Require pairing code exchange before accepting requests.
+</ParamField>
+
+<ParamField path="gateway.allow_public_bind" type="boolean" default={false}>
+  Allow binding to non-localhost without an active tunnel.
+  
+  <Warning>
+    Only enable this if you have proper network isolation (firewall, VPN).
+  </Warning>
+</ParamField>
+
+<ParamField path="gateway.pair_rate_limit_per_minute" type="number" default={10}>
+  Maximum `/pair` requests per minute per client.
+</ParamField>
+
+<ParamField path="gateway.webhook_rate_limit_per_minute" type="number" default={60}>
+  Maximum `/webhook` requests per minute per client.
+</ParamField>
+
+<ParamField path="gateway.trust_forwarded_headers" type="boolean" default={false}>
+  Trust proxy-forwarded client IP headers (`X-Forwarded-For`, `X-Real-IP`).
+  
+  Only enable behind a trusted reverse proxy.
+</ParamField>
+
+<ParamField path="gateway.idempotency_ttl_secs" type="number" default={300}>
+  TTL for webhook idempotency keys (5 minutes).
+</ParamField>
+
+## Autonomy Levels
+
+Corvus supports three autonomy levels:
+
+<Tabs>
+  <Tab title="Readonly">
+    No state-modifying actions. Agent can only:
+    - Read files
+    - Recall memories
+    - Execute read-only shell commands
+
+    ```toml
+    [autonomy]
+    level = "readonly"
+    ```
+  </Tab>
+  <Tab title="Supervised (Default)">
+    Interactive approval for risky actions:
+    - Medium-risk commands require approval
+    - High-risk commands are blocked
+    - Workspace-only file access
+
+    ```toml
+    [autonomy]
+    level = "supervised"
+    workspace_only = true
+    require_approval_for_medium_risk = true
+    block_high_risk_commands = true
+    ```
+  </Tab>
+  <Tab title="Full">
+    Full autonomous execution:
+    - No interactive approval
+    - Respects allowlists and rate limits
+    - Use with caution
+
+    ```toml
+    [autonomy]
+    level = "full"
+    workspace_only = true
+    max_actions_per_hour = 20
+    max_cost_per_day_cents = 500
+    ```
+  </Tab>
+</Tabs>
+
+### Autonomy Configuration
+
+```toml
+[autonomy]
+level = "supervised"
+workspace_only = true
+
+# Command allowlists
+allowed_commands = ["git", "npm", "cargo", "ls", "cat", "grep"]
+
+# Path blocklists
+forbidden_paths = [
+  "/etc", "/root", "/home", "/usr", "/bin", "/sbin",
+  "/lib", "/opt", "/boot", "/dev", "/proc", "/sys",
+  "/var", "/tmp",
+  "~/.ssh", "~/.gnupg", "~/.aws", "~/.config"
+]
+
+# Rate limits
+max_actions_per_hour = 20
+max_cost_per_day_cents = 500
+
+# Risk controls
+require_approval_for_medium_risk = true
+block_high_risk_commands = true
+
+# Tool approval overrides
+auto_approve = ["file_read", "memory_recall"]
+always_ask = []  # Always require approval for these tools
+```
+
+### Configuration Fields
+
+<ParamField path="autonomy.level" type="string" default="supervised">
+  Autonomy level: `readonly`, `supervised`, or `full`.
+</ParamField>
+
+<ParamField path="autonomy.workspace_only" type="boolean" default={true}>
+  Restrict file access to workspace directory only.
+  
+  - Blocks 14 system directories
+  - Blocks 4 sensitive dotfiles (`.ssh`, `.gnupg`, `.aws`, `.config`)
+  - Prevents null byte injection
+  - Detects symlink escape attempts
+</ParamField>
+
+<ParamField path="autonomy.allowed_commands" type="string[]" default={["git", "npm", "cargo", "ls", "cat", "grep", "find", "echo", "pwd", "wc", "head", "tail"]}>
+  Allowlist of shell commands the agent can execute.
+</ParamField>
+
+<ParamField path="autonomy.forbidden_paths" type="string[]">
+  Blocklist of paths the agent cannot access. Default: `["/etc", "/root", "/proc", "/sys", "~/.ssh", "~/.gnupg", "~/.aws"]`
+</ParamField>
+
+<ParamField path="autonomy.max_actions_per_hour" type="number" default={20}>
+  Maximum actions per hour (rate limit).
+</ParamField>
+
+<ParamField path="autonomy.max_cost_per_day_cents" type="number" default={500}>
+  Maximum cost per day in cents (budget limit).
+</ParamField>
+
+<ParamField path="autonomy.require_approval_for_medium_risk" type="boolean" default={true}>
+  Require explicit approval for medium-risk shell commands.
+</ParamField>
+
+<ParamField path="autonomy.block_high_risk_commands" type="boolean" default={true}>
+  Block high-risk shell commands even if allowlisted.
+</ParamField>
+
+<ParamField path="autonomy.auto_approve" type="string[]" default={["file_read", "memory_recall"]}>
+  Tools that never require approval (read-only tools).
+</ParamField>
+
+<ParamField path="autonomy.always_ask" type="string[]" default={[]}>
+  Tools that always require interactive approval, even after "Always" confirmation.
+</ParamField>
+
+## Runtime Configuration
+
+Corvus supports two runtime modes:
+
+<Tabs>
+  <Tab title="Native (Default)">
+    Direct execution on the host system:
+
+    ```toml
+    [runtime]
+    kind = "native"
+    ```
+
+    **Best for:**
+    - Development
+    - Trusted environments
+    - Maximum performance
+  </Tab>
+  <Tab title="Docker">
+    Sandboxed execution in Docker containers:
+
+    ```toml
+    [runtime]
+    kind = "docker"
+
+    [runtime.docker]
+    image = "alpine:3.20"
+    network = "none"
+    memory_limit_mb = 512
+    cpu_limit = 1.0
+    read_only_rootfs = true
+    mount_workspace = true
+    ```
+
+    **Best for:**
+    - Production deployments
+    - Untrusted code execution
+    - Multi-tenant environments
+  </Tab>
+</Tabs>
+
+### Docker Runtime Settings
+
+<ParamField path="runtime.kind" type="string" default="native">
+  Runtime kind: `native` or `docker`.
+</ParamField>
+
+<ParamField path="runtime.docker.image" type="string" default="alpine:3.20">
+  Docker image for shell command execution.
+</ParamField>
+
+<ParamField path="runtime.docker.network" type="string" default="none">
+  Docker network mode:
+  - `none`: No network access (most secure)
+  - `bridge`: Bridge network
+  - `host`: Host network (not recommended)
+</ParamField>
+
+<ParamField path="runtime.docker.memory_limit_mb" type="number" default={512}>
+  Memory limit in MB. `None` = no explicit limit.
+</ParamField>
+
+<ParamField path="runtime.docker.cpu_limit" type="number" default={1.0}>
+  CPU limit (number of cores). `None` = no explicit limit.
+</ParamField>
+
+<ParamField path="runtime.docker.read_only_rootfs" type="boolean" default={true}>
+  Mount root filesystem as read-only.
+</ParamField>
+
+<ParamField path="runtime.docker.mount_workspace" type="boolean" default={true}>
+  Mount workspace into `/workspace` inside the container.
+</ParamField>
+
+<ParamField path="runtime.docker.allowed_workspace_roots" type="string[]" default={[]}>
+  Optional allowlist for workspace mount validation.
+</ParamField>
+
+## OS-Level Sandboxing
+
+Additional sandboxing beyond Docker:
+
+```toml
+[security.sandbox]
+enabled = true  # Auto-detect best available
+backend = "auto"  # "auto", "landlock", "firejail", "bubblewrap", "docker", "none"
+
+# Custom Firejail arguments
+firejail_args = ["--net=none", "--nosound"]
+```
+
+<ParamField path="security.sandbox.enabled" type="boolean" optional>
+  Enable OS-level sandboxing:
+  - `None`: Auto-detect (default)
+  - `true`: Force enable
+  - `false`: Disable
+</ParamField>
+
+<ParamField path="security.sandbox.backend" type="string" default="auto">
+  Sandbox backend:
+  - `auto`: Auto-detect best available (default)
+  - `landlock`: Linux kernel LSM (native, requires Linux 5.13+)
+  - `firejail`: User-space sandbox
+  - `bubblewrap`: User namespaces
+  - `docker`: Docker container isolation
+  - `none`: No OS-level sandboxing
+</ParamField>
+
+## Resource Limits
+
+Limit resource usage for command execution:
+
+```toml
+[security.resources]
+max_memory_mb = 512
+max_cpu_time_seconds = 60
+max_subprocesses = 10
+memory_monitoring = true
+```
+
+<ParamField path="security.resources.max_memory_mb" type="number" default={512}>
+  Maximum memory in MB per command.
+</ParamField>
+
+<ParamField path="security.resources.max_cpu_time_seconds" type="number" default={60}>
+  Maximum CPU time in seconds per command.
+</ParamField>
+
+<ParamField path="security.resources.max_subprocesses" type="number" default={10}>
+  Maximum number of subprocesses.
+</ParamField>
+
+<ParamField path="security.resources.memory_monitoring" type="boolean" default={true}>
+  Enable memory usage monitoring.
+</ParamField>
+
+## Audit Logging
+
+Tamper-evident audit logs:
+
+```toml
+[security.audit]
+enabled = true
+log_path = "audit.log"  # Relative to ~/.corvus/
+max_size_mb = 100
+sign_events = false  # HMAC signing for tamper evidence
+```
+
+<ParamField path="security.audit.enabled" type="boolean" default={true}>
+  Enable audit logging.
+</ParamField>
+
+<ParamField path="security.audit.log_path" type="string" default="audit.log">
+  Path to audit log file (relative to `~/.corvus/`).
+</ParamField>
+
+<ParamField path="security.audit.max_size_mb" type="number" default={100}>
+  Maximum log size in MB before rotation.
+</ParamField>
+
+<ParamField path="security.audit.sign_events" type="boolean" default={false}>
+  Sign events with HMAC for tamper evidence.
+</ParamField>
+
+## Secrets Encryption
+
+Encrypt API keys in config file:
+
+```toml
+[secrets]
+encrypt = true  # Default: encrypt all secrets
+```
+
+<ParamField path="secrets.encrypt" type="boolean" default={true}>
+  Enable encryption for API keys and tokens in `config.toml`.
+  
+  Encrypted values are prefixed with `enc:` and are tied to the local machine via a key file in `~/.corvus/`.
+</ParamField>
+
+## Security Checklist
+
+<AccordionGroup>
+  <Accordion title="1. Gateway not publicly exposed" icon="check">
+    ✅ Binds `127.0.0.1` by default
+    
+    ✅ Refuses `0.0.0.0` without tunnel or explicit `allow_public_bind = true`
+  </Accordion>
+  <Accordion title="2. Pairing required" icon="check">
+    ✅ 6-digit one-time code on startup
+    
+    ✅ Exchange via `POST /pair` for bearer token
+    
+    ✅ All `/webhook` requests require `Authorization: Bearer <token>`
+  </Accordion>
+  <Accordion title="3. Filesystem scoped (no /)" icon="check">
+    ✅ `workspace_only = true` by default
+    
+    ✅ 14 system dirs + 4 sensitive dotfiles blocked
+    
+    ✅ Null byte injection blocked
+    
+    ✅ Symlink escape detection via canonicalization
+  </Accordion>
+  <Accordion title="4. Access via tunnel only" icon="check">
+    ✅ Gateway refuses public bind without active tunnel
+    
+    ✅ Supports Tailscale, Cloudflare, ngrok, or custom tunnel
+  </Accordion>
+</AccordionGroup>
+
+## Complete Example
+
+```toml
+# Gateway security
+[gateway]
+port = 3000
+host = "127.0.0.1"
+require_pairing = true
+allow_public_bind = false
+pair_rate_limit_per_minute = 10
+webhook_rate_limit_per_minute = 60
+
+# Autonomy controls
+[autonomy]
+level = "supervised"
+workspace_only = true
+allowed_commands = ["git", "npm", "cargo"]
+forbidden_paths = ["/etc", "/root", "~/.ssh"]
+max_actions_per_hour = 20
+max_cost_per_day_cents = 500
+require_approval_for_medium_risk = true
+block_high_risk_commands = true
+auto_approve = ["file_read", "memory_recall"]
+
+# Runtime isolation
+[runtime]
+kind = "docker"
+
+[runtime.docker]
+image = "alpine:3.20"
+network = "none"
+memory_limit_mb = 512
+cpu_limit = 1.0
+read_only_rootfs = true
+mount_workspace = true
+
+# OS-level sandboxing
+[security.sandbox]
+enabled = true
+backend = "auto"
+
+# Resource limits
+[security.resources]
+max_memory_mb = 512
+max_cpu_time_seconds = 60
+max_subprocesses = 10
+
+# Audit logging
+[security.audit]
+enabled = true
+log_path = "audit.log"
+max_size_mb = 100
+sign_events = true
+
+# Secrets encryption
+[secrets]
+encrypt = true
+```
+
+## Tunnel Configuration
+
+Expose gateway securely using tunnels:
+
+<Tabs>
+  <Tab title="Cloudflare">
+    ```toml
+    [tunnel]
+    provider = "cloudflare"
+
+    [tunnel.cloudflare]
+    token = "your-tunnel-token"
+    ```
+  </Tab>
+  <Tab title="Tailscale">
+    ```toml
+    [tunnel]
+    provider = "tailscale"
+
+    [tunnel.tailscale]
+    funnel = true  # Public internet (vs tailnet-only)
+    hostname = "corvus"  # Optional
+    ```
+  </Tab>
+  <Tab title="ngrok">
+    ```toml
+    [tunnel]
+    provider = "ngrok"
+
+    [tunnel.ngrok]
+    auth_token = "your-ngrok-token"
+    domain = "corvus.ngrok.io"  # Optional custom domain
+    ```
+  </Tab>
+  <Tab title="Custom">
+    ```toml
+    [tunnel]
+    provider = "custom"
+
+    [tunnel.custom]
+    start_command = "bore local {port} --to bore.pub"
+    url_pattern = "https://.*\.bore\.pub"
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Configuration" icon="plug" href="/configuration/providers">
+    Set up AI model providers and API keys
+  </Card>
+  <Card title="Channel Configuration" icon="comments" href="/configuration/channels">
+    Enable messaging platform integrations
+  </Card>
+</CardGroup>

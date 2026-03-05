@@ -1,0 +1,466 @@
+---
+title: 'CLI Commands'
+description: 'Complete command reference for the Corvus CLI'
+icon: 'terminal'
+---
+
+# CLI Commands
+
+Corvus provides a comprehensive CLI for managing the agent runtime. All commands are defined in `src/main.rs:80-228`.
+
+## Overview
+
+```bash
+corvus [COMMAND] [OPTIONS]
+```
+
+## Core Commands
+
+### onboard
+
+Initialize workspace and configuration.
+
+```bash
+# Quick setup (default)
+corvus onboard --api-key sk-... --provider openrouter
+
+# Full interactive wizard
+corvus onboard --interactive
+
+# Repair channels only
+corvus onboard --channels-only
+```
+
+**Options:**
+
+<ParamField path="--interactive" type="boolean">
+  Run the full 7-step wizard (includes memory backend + Surreal options)
+</ParamField>
+
+<ParamField path="--channels-only" type="boolean">
+  Reconfigure channels/allowlists only (fast repair flow)
+</ParamField>
+
+<ParamField path="--api-key" type="string">
+  API key (used in quick mode)
+</ParamField>
+
+<ParamField path="--provider" type="string" default="openrouter">
+  Provider name (used in quick mode)
+</ParamField>
+
+<ParamField path="--memory" type="string" default="sqlite">
+  Memory backend: `sqlite`, `lucid`, `surreal`, `markdown`, `none`
+</ParamField>
+
+### agent
+
+Start the AI agent loop.
+
+```bash
+# Interactive mode
+corvus agent
+
+# Single message mode
+corvus agent -m "Hello, Corvus!"
+
+# Custom provider and model
+corvus agent --provider anthropic --model claude-sonnet-4
+
+# Attach peripheral
+corvus agent --peripheral nucleo-f401re:/dev/ttyACM0
+```
+
+**Options:**
+
+<ParamField path="-m, --message" type="string">
+  Single message mode (don't enter interactive mode)
+</ParamField>
+
+<ParamField path="-p, --provider" type="string">
+  Provider to use (overrides config)
+</ParamField>
+
+<ParamField path="--model" type="string">
+  Model to use (overrides config)
+</ParamField>
+
+<ParamField path="-t, --temperature" type="float" default="0.7">
+  Temperature (0.0 - 2.0)
+</ParamField>
+
+<ParamField path="--peripheral" type="string[]">
+  Attach peripherals (board:path format)
+</ParamField>
+
+### gateway
+
+Start the webhook server.
+
+```bash
+# Default (127.0.0.1:8080)
+corvus gateway
+
+# Custom port
+corvus gateway --port 3000
+
+# Random available port (security hardened)
+corvus gateway --port 0
+
+# Custom host
+corvus gateway --host 0.0.0.0 --port 8080
+```
+
+**Options:**
+
+<ParamField path="-p, --port" type="u16">
+  Port to listen on (0 = random available port)
+</ParamField>
+
+<ParamField path="--host" type="string" default="127.0.0.1">
+  Host to bind to
+</ParamField>
+
+### daemon
+
+Start long-running autonomous runtime (gateway + channels + heartbeat + scheduler).
+
+```bash
+# Start daemon
+corvus daemon
+
+# Custom port
+corvus daemon --port 3000
+```
+
+**Options:**
+
+Same as `gateway` command.
+
+### service
+
+Manage OS service lifecycle (launchd/systemd user service).
+
+```bash
+# Install service
+corvus service install
+
+# Linux: keep running after logout/reboot
+corvus service install --linger on
+
+# Start/stop/restart
+corvus service start
+corvus service stop
+corvus service restart  # useful after binary updates
+
+# Check status
+corvus service status
+
+# Uninstall
+corvus service uninstall
+```
+
+**Subcommands:**
+
+- `install` — Install user service
+- `start` — Start service
+- `stop` — Stop service
+- `restart` — Restart service
+- `status` — Show service status
+- `uninstall` — Remove service
+
+### doctor
+
+Run diagnostics for daemon/scheduler/channel freshness.
+
+```bash
+corvus doctor
+```
+
+Checks:
+- Daemon health
+- Scheduler status
+- Channel connectivity
+- Configuration validity
+- File permissions
+
+### status
+
+Show full system status.
+
+```bash
+corvus status
+```
+
+**Output:**
+
+```
+🦀 Corvus Status
+
+Version:     0.1.2
+Workspace:   /Users/alice/.corvus/workspace
+Config:      /Users/alice/.corvus/config.toml
+
+🤖 Provider:      openrouter
+   Model:         anthropic/claude-sonnet-4
+📊 Observability:  log
+🛡️  Autonomy:      Supervised
+⚙️  Runtime:       native
+💓 Heartbeat:      every 30min
+🧠 Memory:         sqlite (auto-save: on)
+
+Security:
+  Workspace only:    true
+  Allowed commands:  git, npm, cargo, ls, cat, grep
+  Max actions/hour:  100
+  Max cost/day:      $5.00
+
+Channels:
+  CLI:      ✅ always
+  Telegram: ✅ configured
+  Discord:  ❌ not configured
+```
+
+## Provider Management
+
+### providers
+
+List supported AI providers.
+
+```bash
+corvus providers
+```
+
+**Output:**
+
+```
+Supported providers (22 total):
+
+  ID (use in config)  DESCRIPTION
+  ─────────────────── ───────────
+  openrouter          OpenRouter (active)
+  anthropic           Anthropic Claude
+  openai              OpenAI
+  ollama              Ollama [local]
+  ...
+
+  custom:<URL>   Any OpenAI-compatible endpoint
+```
+
+### models
+
+Manage provider model catalogs.
+
+```bash
+# Refresh models for default provider
+corvus models refresh
+
+# Refresh specific provider
+corvus models refresh --provider anthropic
+
+# Force refresh (ignore cache)
+corvus models refresh --force
+```
+
+## Channel Management
+
+### channel
+
+Manage channels (Telegram, Discord, Slack).
+
+```bash
+# List configured channels
+corvus channel list
+
+# Start all channels
+corvus channel start
+
+# Run health checks
+corvus channel doctor
+
+# Bind Telegram identity to allowlist
+corvus channel bind-telegram alice
+```
+
+**Subcommands:**
+
+- `list` — List configured channels
+- `start` — Start all channels
+- `doctor` — Run health checks
+- `bind-telegram <identity>` — Add Telegram user to allowlist
+
+## Scheduling
+
+### cron
+
+Configure and manage scheduled tasks.
+
+```bash
+# List scheduled tasks
+corvus cron list
+
+# Add cron task
+corvus cron add "0 9 * * *" --tz America/Los_Angeles "daily standup"
+
+# Add one-shot task
+corvus cron add-at "2026-03-10T15:00:00Z" "send reminder"
+
+# Add interval task
+corvus cron add-every 3600000 "hourly check"  # milliseconds
+
+# Add delayed task
+corvus cron once 30m "follow up"
+corvus cron once 2h "status check"
+
+# Pause/resume task
+corvus cron pause <task-id>
+corvus cron resume <task-id>
+
+# Remove task
+corvus cron remove <task-id>
+```
+
+## Integrations
+
+### integrations
+
+Browse 50+ integrations.
+
+```bash
+# Show integration details
+corvus integrations info Telegram
+corvus integrations info "Google Calendar"
+```
+
+## Skills
+
+### skills
+
+Manage user-defined skills.
+
+```bash
+# List installed skills
+corvus skills list
+
+# Install from GitHub
+corvus skills install https://github.com/user/skill-pack
+
+# Install from local path
+corvus skills install ./my-skill
+
+# Remove skill
+corvus skills remove my-skill
+```
+
+## Migration
+
+### migrate
+
+Migrate data from other agent runtimes.
+
+```bash
+# Preview migration from OpenClaw
+corvus migrate openclaw --dry-run
+
+# Execute migration
+corvus migrate openclaw
+
+# Custom source path
+corvus migrate openclaw --source ~/.openclaw/workspace
+```
+
+## Authentication
+
+### auth
+
+Manage provider subscription authentication profiles.
+
+```bash
+# Login with OAuth (OpenAI Codex)
+corvus auth login --provider openai-codex
+corvus auth login --provider openai-codex --device-code
+
+# Complete OAuth flow
+corvus auth paste-redirect --provider openai-codex
+
+# Paste token (Anthropic)
+corvus auth paste-token --provider anthropic
+corvus auth setup-token --provider anthropic  # interactive
+
+# Refresh token
+corvus auth refresh --provider openai-codex
+
+# Switch active profile
+corvus auth use --provider openai-codex --profile work
+
+# Logout
+corvus auth logout --provider openai-codex --profile default
+
+# List profiles
+corvus auth list
+
+# Show auth status
+corvus auth status
+```
+
+## Hardware & Peripherals
+
+### hardware
+
+Discover and introspect USB hardware.
+
+```bash
+corvus hardware list
+corvus hardware info <device-id>
+```
+
+### peripheral
+
+Manage hardware peripherals (STM32, RPi GPIO, etc.).
+
+```bash
+corvus peripheral list
+corvus peripheral connect nucleo-f401re /dev/ttyACM0
+corvus peripheral disconnect nucleo-f401re
+```
+
+## Global Options
+
+All commands support:
+
+<ParamField path="--help" type="boolean">
+  Show command help
+</ParamField>
+
+<ParamField path="--version" type="boolean">
+  Show version
+</ParamField>
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `RUST_LOG` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
+| `CORVUS_SESSION_ID` | Override session ID |
+| `CORVUS_DISABLE_UPDATE_CHECK` | Disable update notifications (`1`) |
+| `CORVUS_MEMORY_BACKEND` | Override memory backend |
+| `CORVUS_SURREALDB_URL` | SurrealDB connection URL |
+
+See [Configuration Reference](/api/config/environment) for full list.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|----------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Configuration error |
+| 3 | Network error |
+| 4 | Permission error |
+
+## Related
+
+- [Agent Command](/api/cli/agent)
+- [Gateway Command](/api/cli/gateway)
+- [Daemon Command](/api/cli/daemon)
+- [Configuration](/api/config/schema)

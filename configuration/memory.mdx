@@ -1,0 +1,382 @@
+---
+title: Memory Configuration
+description: Configure memory backends, embedding providers, and hybrid search settings
+---
+
+## Overview
+
+Corvus implements a full-stack memory system with **zero external dependencies**. All components (vector search, keyword search, embedding cache) are built-in and optimized for performance.
+
+## Memory Backends
+
+Corvus supports multiple memory backends with identical API:
+
+<CardGroup cols={2}>
+  <Card title="SQLite (Default)" icon="database">
+    Hybrid vector + keyword search with FTS5
+    
+    **Best for:** Most use cases, production deployments
+  </Card>
+  <Card title="SurrealDB" icon="server">
+    Distributed graph database backend
+    
+    **Best for:** Multi-agent systems, shared memory
+  </Card>
+  <Card title="Markdown" icon="file">
+    Flat-file storage for simple setups
+    
+    **Best for:** Development, testing, portability
+  </Card>
+  <Card title="None" icon="ban">
+    Explicit no-op memory (disabled)
+    
+    **Best for:** Stateless agents, temporary instances
+  </Card>
+</CardGroup>
+
+## SQLite Backend (Recommended)
+
+Default memory backend with hybrid search:
+
+```toml
+[memory]
+backend = "sqlite"
+auto_save = true
+
+# Embedding configuration
+embedding_provider = "openai"
+embedding_model = "text-embedding-3-small"
+embedding_dimensions = 1536
+
+# Hybrid search weights
+vector_weight = 0.7
+keyword_weight = 0.3
+min_relevance_score = 0.4
+
+# Cache settings
+embedding_cache_size = 10000
+chunk_max_tokens = 512
+```
+
+### Architecture
+
+| Layer | Implementation |
+|-------|---------------|
+| **Vector DB** | Embeddings stored as BLOB, cosine similarity search |
+| **Keyword Search** | FTS5 virtual tables with BM25 scoring |
+| **Hybrid Merge** | Custom weighted merge function |
+| **Embeddings** | OpenAI or custom endpoint |
+| **Chunking** | Line-based with heading preservation |
+| **Caching** | LRU cache with 10,000 entry limit |
+
+### Configuration Fields
+
+<ParamField path="memory.backend" type="string" default="sqlite">
+  Memory backend: `sqlite`, `surreal`, `markdown`, or `none`.
+</ParamField>
+
+<ParamField path="memory.auto_save" type="boolean" default={true}>
+  Automatically save conversation context to memory.
+</ParamField>
+
+<ParamField path="memory.embedding_provider" type="string" default="none">
+  Embedding provider:
+  - `openai`: OpenAI embeddings API
+  - `custom:https://your-api.com`: Custom endpoint
+  - `none`: Disable embeddings (keyword-only search)
+</ParamField>
+
+<ParamField path="memory.embedding_model" type="string" default="text-embedding-3-small">
+  Embedding model name.
+</ParamField>
+
+<ParamField path="memory.embedding_dimensions" type="number" default={1536}>
+  Embedding vector dimensions.
+</ParamField>
+
+<ParamField path="memory.vector_weight" type="number" default={0.7}>
+  Weight for vector similarity in hybrid search (0.0-1.0).
+</ParamField>
+
+<ParamField path="memory.keyword_weight" type="number" default={0.3}>
+  Weight for keyword BM25 in hybrid search (0.0-1.0).
+</ParamField>
+
+<ParamField path="memory.min_relevance_score" type="number" default={0.4}>
+  Minimum hybrid score (0.0-1.0) for a memory to be included in context.
+  
+  Memories scoring below this threshold are dropped to prevent irrelevant context bleeding.
+</ParamField>
+
+<ParamField path="memory.embedding_cache_size" type="number" default={10000}>
+  Maximum embedding cache entries before LRU eviction.
+</ParamField>
+
+<ParamField path="memory.chunk_max_tokens" type="number" default={512}>
+  Maximum tokens per chunk for document splitting.
+</ParamField>
+
+## SurrealDB Backend
+
+Distributed memory backend for multi-agent systems:
+
+```toml
+[memory]
+backend = "surreal"
+auto_save = true
+
+[memory.surreal]
+url = "http://127.0.0.1:8000"
+namespace = "corvus"
+database = "memory"
+
+# Authentication (choose one)
+username = "corvus"
+password = "corvus-pass"
+# OR
+token = "jwt-token..."
+
+allow_http_loopback = true  # Allow HTTP for localhost only
+```
+
+### Environment Variables
+
+```bash
+export CORVUS_MEMORY_BACKEND=surreal
+export CORVUS_SURREALDB_URL=http://127.0.0.1:8000
+export CORVUS_SURREALDB_NAMESPACE=corvus
+export CORVUS_SURREALDB_DATABASE=memory
+export CORVUS_SURREALDB_USERNAME=corvus
+export CORVUS_SURREALDB_PASSWORD=your-password
+# OR
+export CORVUS_SURREALDB_TOKEN=jwt-token...
+```
+
+### Configuration Fields
+
+<ParamField path="memory.surreal.url" type="string" optional>
+  SurrealDB endpoint URL:
+  - HTTP: `http://127.0.0.1:8000`
+  - WebSocket: `ws://127.0.0.1:8000/rpc`
+</ParamField>
+
+<ParamField path="memory.surreal.namespace" type="string" default="corvus">
+  SurrealDB namespace.
+</ParamField>
+
+<ParamField path="memory.surreal.database" type="string" default="memory">
+  SurrealDB database name.
+</ParamField>
+
+<ParamField path="memory.surreal.username" type="string" optional>
+  Username for authentication (ignored if `token` is set).
+</ParamField>
+
+<ParamField path="memory.surreal.password" type="string" optional>
+  Password for authentication (ignored if `token` is set).
+</ParamField>
+
+<ParamField path="memory.surreal.token" type="string" optional>
+  JWT token for authentication (preferred over username/password).
+</ParamField>
+
+<ParamField path="memory.surreal.allow_http_loopback" type="boolean" default={true}>
+  Allow plain HTTP for loopback addresses only (127.0.0.1, ::1).
+  
+  Non-loopback HTTP URLs are rejected unless this is `false` and the URL is HTTPS.
+</ParamField>
+
+## Markdown Backend
+
+Flat-file storage for simple setups:
+
+```toml
+[memory]
+backend = "markdown"
+auto_save = true
+```
+
+Memories are stored as markdown files in `~/.corvus/workspace/memory/`.
+
+## Memory Hygiene
+
+Automatic memory management to prevent unbounded growth:
+
+```toml
+[memory]
+hygiene_enabled = true
+archive_after_days = 7
+purge_after_days = 30
+conversation_retention_days = 30
+```
+
+<ParamField path="memory.hygiene_enabled" type="boolean" default={true}>
+  Run automatic memory hygiene (archiving + retention cleanup).
+</ParamField>
+
+<ParamField path="memory.archive_after_days" type="number" default={7}>
+  Archive daily/session files older than N days.
+</ParamField>
+
+<ParamField path="memory.purge_after_days" type="number" default={30}>
+  Purge archived files older than N days.
+</ParamField>
+
+<ParamField path="memory.conversation_retention_days" type="number" default={30}>
+  For SQLite backend: prune conversation rows older than N days.
+</ParamField>
+
+## Response Caching
+
+Cache LLM responses to save tokens on repeated prompts:
+
+```toml
+[memory]
+response_cache_enabled = true
+response_cache_ttl_minutes = 60
+response_cache_max_entries = 5000
+```
+
+<ParamField path="memory.response_cache_enabled" type="boolean" default={false}>
+  Enable LLM response caching to avoid paying for duplicate prompts.
+</ParamField>
+
+<ParamField path="memory.response_cache_ttl_minutes" type="number" default={60}>
+  TTL in minutes for cached responses.
+</ParamField>
+
+<ParamField path="memory.response_cache_max_entries" type="number" default={5000}>
+  Maximum cached responses before LRU eviction.
+</ParamField>
+
+## Memory Snapshots
+
+Periodic export of core memories to Markdown:
+
+```toml
+[memory]
+snapshot_enabled = true
+snapshot_on_hygiene = true
+auto_hydrate = true
+```
+
+<ParamField path="memory.snapshot_enabled" type="boolean" default={false}>
+  Enable periodic export of core memories to `MEMORY_SNAPSHOT.md`.
+</ParamField>
+
+<ParamField path="memory.snapshot_on_hygiene" type="boolean" default={false}>
+  Run snapshot during hygiene passes (heartbeat-driven).
+</ParamField>
+
+<ParamField path="memory.auto_hydrate" type="boolean" default={true}>
+  Auto-hydrate from `MEMORY_SNAPSHOT.md` when `brain.db` is missing.
+</ParamField>
+
+## SQLite Advanced Settings
+
+```toml
+[memory]
+sqlite_open_timeout_secs = 300  # Max seconds to wait for DB lock
+```
+
+<ParamField path="memory.sqlite_open_timeout_secs" type="number" optional>
+  Maximum seconds to wait when opening the database (e.g., file locked).
+  
+  - `None`: Wait indefinitely (default)
+  - Recommended max: `300` (5 minutes)
+</ParamField>
+
+## Memory Tools
+
+The agent automatically uses these tools to manage memory:
+
+| Tool | Description |
+|------|-------------|
+| `memory_store` | Save information to long-term memory |
+| `memory_recall` | Search memory using hybrid vector + keyword search |
+| `memory_forget` | Delete specific memories |
+
+**Example agent usage:**
+
+```bash
+corvus agent -m "Remember that my favorite color is blue"
+# Agent uses memory_store internally
+
+corvus agent -m "What's my favorite color?"
+# Agent uses memory_recall internally
+```
+
+## Complete Example
+
+```toml
+[memory]
+# Backend selection
+backend = "sqlite"
+auto_save = true
+
+# Embedding configuration
+embedding_provider = "openai"
+embedding_model = "text-embedding-3-small"
+embedding_dimensions = 1536
+
+# Hybrid search weights
+vector_weight = 0.7
+keyword_weight = 0.3
+min_relevance_score = 0.4
+
+# Cache settings
+embedding_cache_size = 10000
+chunk_max_tokens = 512
+
+# Memory hygiene
+hygiene_enabled = true
+archive_after_days = 7
+purge_after_days = 30
+conversation_retention_days = 30
+
+# Response caching
+response_cache_enabled = true
+response_cache_ttl_minutes = 60
+response_cache_max_entries = 5000
+
+# Memory snapshots
+snapshot_enabled = true
+snapshot_on_hygiene = true
+auto_hydrate = true
+
+# SQLite settings
+sqlite_open_timeout_secs = 300
+
+# SurrealDB settings (if backend = "surreal")
+[memory.surreal]
+url = "http://127.0.0.1:8000"
+namespace = "corvus"
+database = "memory"
+username = "corvus"
+password = "corvus-pass"
+allow_http_loopback = true
+```
+
+## Migration from OpenClaw
+
+Migrate existing OpenClaw memories:
+
+```bash
+# Preview migration (dry run)
+corvus migrate openclaw --dry-run
+
+# Perform migration
+corvus migrate openclaw
+```
+
+This imports:
+- Identity and soul definitions
+- Conversation history
+- Long-term memories
+- User preferences
+
+## Next Steps
+
+<Card title="Security Configuration" icon="shield" href="/configuration/security">
+  Configure gateway security, autonomy levels, and runtime isolation
+</Card>

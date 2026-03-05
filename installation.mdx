@@ -1,0 +1,577 @@
+---
+title: Installation
+description: Install Corvus via npm, cargo, or binary download across all major platforms
+---
+
+# Installation
+
+Corvus can be installed in multiple ways depending on your platform and preferences. Choose the method that works best for your workflow.
+
+<Note>
+  Corvus ships as a single self-contained binary (3.4MB) with no external dependencies. All installation methods provide the same functionality.
+</Note>
+
+## Prerequisites
+
+Before installing Corvus, ensure you have the following prerequisites for your chosen installation method:
+
+<Tabs>
+  <Tab title="npm/pnpm/yarn/bun">
+    **Node.js 18+** (for package manager installation)
+    
+    Check your Node.js version:
+    
+    ```bash
+    node --version
+    ```
+    
+    If you need to install or update Node.js, visit [nodejs.org](https://nodejs.org/).
+  </Tab>
+  
+  <Tab title="Cargo (Rust)">
+    **Rust 1.75+** (for building from source)
+    
+    Install Rust via rustup:
+    
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ```
+    
+    Verify installation:
+    
+    ```bash
+    rustc --version
+    cargo --version
+    ```
+  </Tab>
+  
+  <Tab title="Binary Download">
+    No prerequisites required - just download and run!
+    
+    Supported platforms:
+    - Linux (x64, ARM64)
+    - macOS (Intel, Apple Silicon)
+    - Windows (x64)
+  </Tab>
+</Tabs>
+
+## Installation Methods
+
+### NPM Package Manager (Recommended)
+
+The fastest way to get started with Corvus is via npm, pnpm, yarn, or bun. The package automatically downloads and manages the appropriate Rust binary for your platform.
+
+<CodeGroup>
+```bash npm
+# Global installation
+npm install -g @dallay/corvus
+
+# Or use npx without installing
+npx @dallay/corvus --help
+```
+
+```bash pnpm
+# Global installation
+pnpm add -g @dallay/corvus
+
+# Or use pnpm dlx without installing
+pnpm dlx @dallay/corvus --help
+```
+
+```bash yarn
+# Global installation
+yarn global add @dallay/corvus
+
+# Or use yarn dlx without installing
+yarn dlx @dallay/corvus --help
+```
+
+```bash bun
+# Global installation
+bun add -g @dallay/corvus
+
+# Or use bunx without installing
+bunx @dallay/corvus --help
+```
+</CodeGroup>
+
+<Accordion title="Platform-specific binaries">
+  The npm package includes optional dependencies for each platform:
+  
+  - `@dallay/corvus-darwin-x64` (macOS Intel)
+  - `@dallay/corvus-darwin-arm64` (macOS Apple Silicon)
+  - `@dallay/corvus-linux-x64` (Linux x64)
+  - `@dallay/corvus-linux-arm64` (Linux ARM64)
+  - `@dallay/corvus-windows-x64` (Windows x64)
+  
+  Your package manager automatically installs only the binary for your platform.
+</Accordion>
+
+**Advantages:**
+- No Rust toolchain required
+- Automatic platform detection
+- Easy updates via package manager
+- Works with npx/pnpm dlx/yarn dlx/bunx without installation
+
+**Disadvantages:**
+- Requires Node.js 18+
+- Slightly larger download (includes npm wrapper)
+
+### Build from Source with Cargo
+
+For maximum control and the latest development version, build Corvus from source using Cargo.
+
+<Steps>
+  <Step title="Clone the Repository">
+    ```bash
+    git clone https://github.com/dallay/corvus.git
+    cd corvus/clients/agent-runtime
+    ```
+  </Step>
+  
+  <Step title="Build Release Binary">
+    <CodeGroup>
+    ```bash Standard Release
+    cargo build --release
+    ```
+    
+    ```bash With SurrealDB Support
+    cargo build --release --features memory-surreal
+    ```
+    
+    ```bash Optimized for Size
+    cargo build --profile dist
+    ```
+    
+    ```bash Fast Build (Development)
+    cargo build
+    ```
+    </CodeGroup>
+    
+    The binary will be available at:
+    - Release: `target/release/corvus`
+    - Debug: `target/debug/corvus`
+    - Dist profile: `target/dist/corvus`
+  </Step>
+  
+  <Step title="Install Globally (Optional)">
+    Install the binary to your system:
+    
+    ```bash
+    cargo install --path . --force
+    ```
+    
+    This installs to `~/.cargo/bin/corvus` (ensure this is in your PATH).
+  </Step>
+  
+  <Step title="Verify Installation">
+    ```bash
+    corvus --version
+    ```
+    
+    Expected output:
+    ```
+    corvus 0.2.2
+    ```
+  </Step>
+</Steps>
+
+<Accordion title="Build profiles explained">
+  Corvus uses multiple Cargo profiles for different use cases:
+  
+  | Profile | Optimization | LTO | Codegen Units | Use Case |
+  |---------|--------------|-----|---------------|----------|
+  | **release** | `-Oz` (size) | thin | 1 | Standard distribution |
+  | **release-fast** | `-Oz` | thin | 8 | Fast builds on powerful machines (16GB+ RAM) |
+  | **dist** | `-Oz` | fat | 1 | Maximum size optimization for distribution |
+  | **dev** | `-O0` | none | 256 | Fast compilation during development |
+  
+  The default `release` profile uses `codegen-units = 1` for low-memory devices like Raspberry Pi 3.
+</Accordion>
+
+**Advantages:**
+- Latest development features
+- Maximum performance
+- Full control over build flags and features
+- No intermediate wrapper layers
+
+**Disadvantages:**
+- Requires Rust toolchain (1.75+)
+- Longer build time (2-5 minutes on first build)
+- Must manually update via git pull
+
+### Binary Download
+
+Download pre-built binaries directly from GitHub Releases.
+
+<Steps>
+  <Step title="Download for Your Platform">
+    Visit the [Corvus Releases page](https://github.com/dallay/corvus/releases) and download the appropriate binary:
+    
+    - **macOS (Intel)**: `corvus-darwin-x64`
+    - **macOS (Apple Silicon)**: `corvus-darwin-arm64`
+    - **Linux (x64)**: `corvus-linux-x64`
+    - **Linux (ARM64)**: `corvus-linux-arm64`
+    - **Windows (x64)**: `corvus-windows-x64.exe`
+  </Step>
+  
+  <Step title="Make Executable (macOS/Linux)">
+    ```bash
+    chmod +x corvus-*
+    ```
+  </Step>
+  
+  <Step title="Move to PATH (Optional)">
+    <CodeGroup>
+    ```bash macOS/Linux
+    sudo mv corvus-* /usr/local/bin/corvus
+    ```
+    
+    ```bash Windows
+    # Move to a directory in your PATH, e.g.:
+    move corvus-windows-x64.exe C:\Windows\System32\corvus.exe
+    ```
+    </CodeGroup>
+    
+    Or add the current directory to your PATH.
+  </Step>
+  
+  <Step title="Verify Installation">
+    ```bash
+    corvus --version
+    ```
+  </Step>
+</Steps>
+
+**Advantages:**
+- No toolchain dependencies
+- Instant setup
+- Smallest download size (3.4MB)
+
+**Disadvantages:**
+- Manual download and PATH setup
+- Manual updates required
+
+## Optional Dependencies
+
+Corvus supports additional features via optional dependencies:
+
+### Docker (for Sandboxing)
+
+To use Docker-based sandboxing for secure command execution:
+
+<CodeGroup>
+```bash macOS
+brew install docker
+```
+
+```bash Linux (Ubuntu/Debian)
+sudo apt-get install docker.io
+sudo usermod -aG docker $USER
+```
+
+```bash Windows
+# Download Docker Desktop from:
+# https://www.docker.com/products/docker-desktop
+```
+</CodeGroup>
+
+Enable in config:
+
+```toml ~/.corvus/config.toml
+[runtime]
+kind = "docker"
+
+[runtime.docker]
+image = "alpine:3.20"
+network = "none"
+memory_limit_mb = 512
+read_only_rootfs = true
+mount_workspace = true
+```
+
+### SurrealDB (for Advanced Memory)
+
+To use SurrealDB as the memory backend:
+
+<CodeGroup>
+```bash Cargo Build
+cargo build --release --features memory-surreal
+```
+
+```bash Docker
+docker run --rm -p 8000:8000 surrealdb/surrealdb:latest start
+```
+
+```bash Homebrew
+brew install surrealdb/tap/surreal
+surreal start
+```
+</CodeGroup>
+
+Enable in config:
+
+```toml ~/.corvus/config.toml
+[memory]
+backend = "surreal"
+
+[memory.surreal]
+url = "http://127.0.0.1:8000"
+namespace = "corvus"
+database = "memory"
+allow_http_loopback = true
+```
+
+<Warning>
+  The SurrealDB feature requires building from source with `--features memory-surreal`. It's not included in the npm distribution by default.
+</Warning>
+
+## Platform-Specific Notes
+
+### macOS
+
+<AccordionGroup>
+  <Accordion title="Apple Silicon (M1/M2/M3)">
+    Use the `corvus-darwin-arm64` binary. If you see Rosetta 2 warnings, ensure you downloaded the ARM64 version, not x64.
+    
+    ```bash
+    file $(which corvus)
+    # Should show: Mach-O 64-bit executable arm64
+    ```
+  </Accordion>
+  
+  <Accordion title="Gatekeeper warnings">
+    On first run, macOS may block the binary with a security warning:
+    
+    1. Open **System Preferences** → **Security & Privacy**
+    2. Click **"Allow Anyway"** next to the Corvus message
+    3. Re-run the command
+    
+    Or bypass Gatekeeper entirely:
+    
+    ```bash
+    xattr -d com.apple.quarantine /path/to/corvus
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Linux
+
+<AccordionGroup>
+  <Accordion title="Permission denied">
+    Ensure the binary is executable:
+    
+    ```bash
+    chmod +x corvus
+    ```
+  </Accordion>
+  
+  <Accordion title="GLIBC version errors">
+    Corvus is statically linked with musl for maximum compatibility. If you encounter GLIBC errors, ensure you're using the correct binary for your architecture (x64 vs ARM64).
+  </Accordion>
+  
+  <Accordion title="systemd service (persistent daemon)">
+    To run Corvus as a systemd service:
+    
+    ```bash
+    corvus service install --linger on
+    ```
+    
+    This creates a user service that survives logout and reboot.
+  </Accordion>
+</AccordionGroup>
+
+### Windows
+
+<AccordionGroup>
+  <Accordion title="Windows Defender warnings">
+    Windows Defender may flag the binary as unrecognized. Add an exception:
+    
+    1. Open **Windows Security** → **Virus & threat protection**
+    2. Click **Manage settings** → **Add or remove exclusions**
+    3. Add the Corvus binary path
+  </Accordion>
+  
+  <Accordion title="PowerShell execution policy">
+    If scripts fail to run, update your execution policy:
+    
+    ```powershell
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Verification
+
+After installation, verify that Corvus is working correctly:
+
+<Steps>
+  <Step title="Check Version">
+    ```bash
+    corvus --version
+    ```
+    
+    Expected output:
+    ```
+    corvus 0.2.2
+    ```
+  </Step>
+  
+  <Step title="Run Help Command">
+    ```bash
+    corvus --help
+    ```
+    
+    This displays all available commands and options.
+  </Step>
+  
+  <Step title="Measure Binary Size and Startup Time">
+    <CodeGroup>
+    ```bash macOS/Linux
+    ls -lh $(which corvus)
+    /usr/bin/time -l corvus --help
+    ```
+    
+    ```bash Windows
+    # Binary size
+    dir corvus.exe
+    
+    # Startup time
+    Measure-Command { corvus --help }
+    ```
+    </CodeGroup>
+    
+    Expected:
+    - Binary size: ~3.4MB
+    - Startup time: &lt;10ms on modern hardware
+  </Step>
+  
+  <Step title="Run System Diagnostics">
+    ```bash
+    corvus doctor
+    ```
+    
+    This checks for common issues and reports system health.
+  </Step>
+</Steps>
+
+## Updating Corvus
+
+### NPM Installation
+
+<CodeGroup>
+```bash npm
+npm update -g @dallay/corvus
+```
+
+```bash pnpm
+pnpm update -g @dallay/corvus
+```
+
+```bash yarn
+yarn global upgrade @dallay/corvus
+```
+
+```bash bun
+bun update -g @dallay/corvus
+```
+</CodeGroup>
+
+### Cargo Installation
+
+```bash
+cd corvus/clients/agent-runtime
+git pull
+cargo install --path . --force
+```
+
+### Binary Download
+
+1. Download the latest release from [GitHub Releases](https://github.com/dallay/corvus/releases)
+2. Replace your existing binary
+3. Restart any running Corvus services:
+   ```bash
+   corvus service restart
+   ```
+
+<Note>
+  Corvus checks for updates automatically when you run `agent`, `daemon`, or `status` commands. Set `CORVUS_DISABLE_UPDATE_CHECK=1` to disable update notifications.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Complete the onboarding wizard and run your first agent
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Learn about all configuration options
+  </Card>
+  
+  <Card title="Development" icon="code" href="/guides/deployment">
+    Set up your development environment
+  </Card>
+  
+  <Card title="API Reference" icon="book" href="/api/traits/provider">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Installation fails with npm">
+    1. Clear npm cache: `npm cache clean --force`
+    2. Check Node.js version: `node --version` (requires 18+)
+    3. Try with verbose logging: `npm install -g @dallay/corvus --verbose`
+    4. Fall back to binary download or Cargo installation
+  </Accordion>
+  
+  <Accordion title="Cargo build fails">
+    Common causes:
+    
+    - **Outdated Rust**: Update with `rustup update`
+    - **Low memory**: Use `cargo build --profile release` instead of `--profile dist`
+    - **Missing system dependencies**: Install build-essential (Linux) or Xcode Command Line Tools (macOS)
+    
+    For detailed error logs:
+    ```bash
+    cargo build --release --verbose
+    ```
+  </Accordion>
+  
+  <Accordion title="Binary not executable">
+    **macOS/Linux:**
+    ```bash
+    chmod +x corvus
+    ```
+    
+    **Windows:**
+    Ensure you're running PowerShell or Command Prompt as Administrator if moving to System32.
+  </Accordion>
+  
+  <Accordion title="Command not found after installation">
+    Ensure the installation directory is in your PATH:
+    
+    **npm/pnpm/yarn/bun:**
+    ```bash
+    echo $PATH | grep -i npm
+    ```
+    
+    **Cargo:**
+    ```bash
+    echo $PATH | grep -i cargo
+    ```
+    
+    Add to PATH if missing:
+    ```bash
+    # Add to ~/.bashrc or ~/.zshrc:
+    export PATH="$HOME/.cargo/bin:$PATH"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  Still having issues? Check the [GitHub Issues](https://github.com/dallay/corvus/issues) or join the [community discussions](https://github.com/dallay/corvus/discussions).
+</Note>

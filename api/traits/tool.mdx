@@ -1,0 +1,378 @@
+---
+title: 'Tool Trait'
+description: 'Core trait for agent capabilities and tools'
+icon: 'wrench'
+---
+
+# Tool Trait
+
+The `Tool` trait defines the interface for all agent capabilities in Corvus. Every tool (shell, file operations, memory, etc.) implements this trait.
+
+Source: `src/tools/traits.rs:34-57`
+
+## Trait Definition
+
+```rust
+use async_trait::async_trait;
+use serde_json::Value;
+
+#[async_trait]
+pub trait Tool: Send + Sync {
+    /// Tool name (used in LLM function calling)
+    fn name(&self) -> &str;
+    
+    /// Human-readable description
+    fn description(&self) -> &str;
+    
+    /// JSON schema for parameters
+    fn parameters_schema(&self) -> Value;
+    
+    /// Execute the tool with given arguments
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult>;
+    
+    /// Get the full spec for LLM registration
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters_schema(),
+            source: None,
+        }
+    }
+}
+```
+
+## Core Types
+
+### ToolResult
+
+From `src/tools/traits.rs:5-10`:
+
+```rust
+pub struct ToolResult {
+    pub success: bool,
+    pub output: String,
+    pub error: Option<String>,
+}
+```
+
+### ToolSpec
+
+From `src/tools/traits.rs:13-20`:
+
+```rust
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,  // JSON Schema
+    pub source: Option<ToolSourceMetadata>,
+}
+```
+
+### ToolSourceMetadata
+
+For MCP/Composio tools:
+
+```rust
+pub struct ToolSourceMetadata {
+    pub kind: String,           // "mcp", "composio", "builtin"
+    pub provider: Option<String>,
+    pub server: Option<String>,
+    pub original_name: Option<String>,
+}
+```
+
+## Implementing a Tool
+
+Minimal example from `examples/custom_tool.rs:27-71`:
+
+```rust
+use async_trait::async_trait;
+use serde_json::{json, Value};
+
+pub struct HttpGetTool;
+
+#[async_trait]
+impl Tool for HttpGetTool {
+    fn name(&self) -> &str {
+        "http_get"
+    }
+    
+    fn description(&self) -> &str {
+        "Fetch a URL and return the HTTP status code and content length"
+    }
+    
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { 
+                    "type": "string", 
+                    "description": "URL to fetch" 
+                }
+            },
+            "required": ["url"]
+        })
+    }
+    
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let url = args["url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
+        
+        match reqwest::get(url).await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let len = resp.content_length().unwrap_or(0);
+                Ok(ToolResult {
+                    success: status < 400,
+                    output: format!("HTTP {} — {} bytes", status, len),
+                    error: None,
+                })
+            }
+            Err(e) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Request failed: {}", e)),
+            }),
+        }
+    }
+}
+```
+
+## Parameter Schema (JSON Schema)
+
+All tools use JSON Schema for parameter validation:
+
+```rust
+fn parameters_schema(&self) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Relative path to the file"
+            },
+            "approved": {
+                "type": "boolean",
+                "description": "Explicit approval for risky operations",
+                "default": false
+            }
+        },
+        "required": ["path"]
+    })
+}
+```
+
+## Built-in Tools
+
+From `src/tools/mod.rs`:
+
+| Tool | Name | Description |
+|------|------|-------------|
+| ShellTool | `shell` | Execute shell commands |
+| FileReadTool | `file_read` | Read file contents |
+| FileWriteTool | `file_write` | Write file contents |
+| MemoryStoreTool | `memory_store` | Save memories |
+| MemoryRecallTool | `memory_recall` | Search memories |
+| MemoryForgetTool | `memory_forget` | Delete memories |
+| BrowserOpenTool | `browser_open` | Open URLs (opt-in) |
+| ComposioTool | `composio_*` | 1000+ OAuth apps (opt-in) |
+
+## Security Integration
+
+Tools integrate with `SecurityPolicy`:
+
+```rust
+pub struct FileReadTool {
+    security: Arc<SecurityPolicy>,
+}
+
+#[async_trait]
+impl Tool for FileReadTool {
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let path = args["path"].as_str()?;
+        
+        // 1. Rate limit check
+        if self.security.is_rate_limited() {
+            return Ok(ToolResult {
+                success: false,
+                error: Some("Rate limit exceeded".into()),
+                ..Default::default()
+            });
+        }
+        
+        // 2. Path validation
+        if !self.security.is_path_allowed(path) {
+            return Ok(ToolResult {
+                success: false,
+                error: Some(format!("Path not allowed: {}", path)),
+                ..Default::default()
+            });
+        }
+        
+        // 3. Record action (consumes rate limit budget)
+        if !self.security.record_action() {
+            return Ok(ToolResult {
+                success: false,
+                error: Some("Action budget exhausted".into()),
+                ..Default::default()
+            });
+        }
+        
+        // 4. Execute
+        // ...
+    }
+}
+```
+
+## Tool Registration
+
+Register your tool in `src/tools/mod.rs`:
+
+```rust
+pub fn default_tools(
+    security: Arc<SecurityPolicy>,
+    memory: Arc<dyn Memory>,
+    runtime: Arc<dyn RuntimeAdapter>,
+    config: &Config,
+) -> Vec<Arc<dyn Tool>> {
+    let mut tools: Vec<Arc<dyn Tool>> = vec![
+        Arc::new(shell::ShellTool::new(security.clone(), runtime.clone())),
+        Arc::new(file_read::FileReadTool::new(security.clone())),
+        Arc::new(file_write::FileWriteTool::new(security.clone())),
+        Arc::new(memory_store::MemoryStoreTool::new(memory.clone())),
+        Arc::new(memory_recall::MemoryRecallTool::new(memory.clone())),
+        Arc::new(memory_forget::MemoryForgetTool::new(memory.clone())),
+    ];
+    
+    // Optional tools
+    if config.browser.enabled {
+        tools.push(Arc::new(browser_open::BrowserOpenTool::new(config)));
+    }
+    
+    tools
+}
+```
+
+## Error Handling
+
+### Return Errors as ToolResult
+
+```rust
+async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+    // Validation errors: return Result::Err
+    let param = args["param"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing 'param'"))?;
+    
+    // Execution errors: return ToolResult with error field
+    match do_something(param).await {
+        Ok(output) => Ok(ToolResult {
+            success: true,
+            output,
+            error: None,
+        }),
+        Err(e) => Ok(ToolResult {
+            success: false,
+            output: String::new(),
+            error: Some(e.to_string()),
+        }),
+    }
+}
+```
+
+### Never Panic in Tools
+
+<Warning>
+  **Never use `.unwrap()`, `.expect()`, or `panic!()` in tool execution paths.** Return errors via `ToolResult` or `Result::Err`.
+</Warning>
+
+## LLM Integration
+
+Tools are exposed to the LLM via:
+
+### 1. Native Function Calling (OpenAI, Anthropic, Gemini)
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "file_read",
+    "description": "Read the contents of a file in the workspace",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path to the file"
+        }
+      },
+      "required": ["path"]
+    }
+  }
+}
+```
+
+### 2. Prompt-Guided (Ollama, local models)
+
+```markdown
+## Available Tools
+
+**file_read**: Read the contents of a file in the workspace
+Parameters: `{"type":"object","properties":{"path":{"type":"string"}}}`
+
+To use a tool, wrap JSON in <tool_call></tool_call> tags:
+
+<tool_call>
+{"name": "file_read", "arguments": {"path": "README.md"}}
+</tool_call>
+```
+
+## Testing Tools
+
+From `src/tools/shell.rs:206-216`:
+
+```rust
+#[tokio::test]
+async fn shell_executes_allowed_command() {
+    let tool = ShellTool::new(
+        test_security(AutonomyLevel::Supervised),
+        test_runtime(),
+    );
+    
+    let result = tool
+        .execute(json!({"command": "echo hello"}))
+        .await
+        .unwrap();
+    
+    assert!(result.success);
+    assert!(result.output.trim().contains("hello"));
+    assert!(result.error.is_none());
+}
+```
+
+## Best Practices
+
+<Tip>
+  Use **descriptive names** without prefixes: `file_read`, not `tool_file_read`
+</Tip>
+
+<Tip>
+  Provide **detailed descriptions** with examples in the JSON schema
+</Tip>
+
+<Tip>
+  Return **structured output** in `ToolResult.output` (e.g., JSON strings for parseable data)
+</Tip>
+
+<Warning>
+  **Always validate inputs** before executing. Don't trust LLM-provided parameters.
+</Warning>
+
+## Related
+
+- [Provider Trait](/api/traits/provider)
+- [Channel Trait](/api/traits/channel)
+- [Tools Overview](/guides/tools/overview)
+- [Custom Tool Example](/extend/examples/tool)

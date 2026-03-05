@@ -1,0 +1,480 @@
+---
+title: Provider Configuration
+description: Configure AI model providers, API keys, and custom endpoints for Corvus
+---
+
+## Supported Providers
+
+Corvus supports **30+ AI providers** out of the box with zero code changes. All providers are swappable through configuration.
+
+### Primary Providers
+
+<AccordionGroup>
+  <Accordion title="OpenRouter (Recommended)" icon="route">
+    Unified access to 100+ models through a single API.
+
+    ```toml
+    api_key = "sk-or-..."
+    default_provider = "openrouter"
+    default_model = "anthropic/claude-sonnet-4-20250514"
+    ```
+
+    **Environment variables:**
+    - `OPENROUTER_API_KEY`
+    - `CORVUS_API_KEY` (fallback)
+  </Accordion>
+
+  <Accordion title="Anthropic" icon="robot">
+    Direct access to Claude models.
+
+    ```toml
+    api_key = "sk-ant-..."
+    default_provider = "anthropic"
+    default_model = "claude-opus-4-20250514"
+    ```
+
+    **Environment variables:**
+    - `ANTHROPIC_OAUTH_TOKEN` (for setup tokens)
+    - `ANTHROPIC_API_KEY`
+    - `CORVUS_API_KEY` (fallback)
+  </Accordion>
+
+  <Accordion title="OpenAI" icon="openai">
+    GPT-4o, o1, and other OpenAI models.
+
+    ```toml
+    api_key = "sk-..."
+    default_provider = "openai"
+    default_model = "gpt-4o"
+    ```
+
+    **Environment variables:**
+    - `OPENAI_API_KEY`
+    - `CORVUS_API_KEY` (fallback)
+  </Accordion>
+
+  <Accordion title="Ollama (Local)" icon="server">
+    Run models locally without API keys.
+
+    ```toml
+    default_provider = "ollama"
+    default_model = "llama3.3:70b"
+    # Optional: for remote Ollama instance
+    api_url = "http://10.0.0.1:11434"
+    ```
+
+    **Environment variables:**
+    - `OLLAMA_API_KEY` (optional, for remote instances)
+  </Accordion>
+
+  <Accordion title="Google Gemini" icon="google">
+    Google's Gemini models.
+
+    ```toml
+    api_key = "AIza..."
+    default_provider = "gemini"
+    default_model = "gemini-2.0-flash"
+    ```
+
+    **Aliases:** `google`, `google-gemini`
+
+    **Environment variables:**
+    - `GOOGLE_API_KEY`
+    - `CORVUS_API_KEY` (fallback)
+  </Accordion>
+</AccordionGroup>
+
+### Additional Providers
+
+<CardGroup cols={3}>
+  <Card title="Groq" icon="bolt">
+    Fast inference with Llama models
+    
+    **Env:** `GROQ_API_KEY`
+  </Card>
+  <Card title="Mistral" icon="wind">
+    Mistral AI models
+    
+    **Env:** `MISTRAL_API_KEY`
+  </Card>
+  <Card title="xAI (Grok)" icon="x">
+    xAI's Grok models
+    
+    **Env:** `XAI_API_KEY`
+  </Card>
+  <Card title="DeepSeek" icon="magnifying-glass">
+    DeepSeek models
+    
+    **Env:** `DEEPSEEK_API_KEY`
+  </Card>
+  <Card title="Together AI" icon="handshake">
+    Open source models
+    
+    **Env:** `TOGETHER_API_KEY`
+  </Card>
+  <Card title="Fireworks AI" icon="fire">
+    Fast open source inference
+    
+    **Env:** `FIREWORKS_API_KEY`
+  </Card>
+  <Card title="Perplexity" icon="search">
+    Search-augmented models
+    
+    **Env:** `PERPLEXITY_API_KEY`
+  </Card>
+  <Card title="Cohere" icon="c">
+    Cohere Command models
+    
+    **Env:** `COHERE_API_KEY`
+  </Card>
+  <Card title="GitHub Copilot" icon="github">
+    GitHub Copilot models
+    
+    **Env:** `GITHUB_TOKEN`
+  </Card>
+  <Card title="NVIDIA NIM" icon="microchip">
+    NVIDIA inference microservices
+    
+    **Env:** `NVIDIA_API_KEY`
+  </Card>
+  <Card title="Bedrock" icon="aws">
+    AWS Bedrock models
+    
+    **Env:** `AWS_ACCESS_KEY_ID`
+  </Card>
+  <Card title="Venice" icon="mask">
+    Privacy-focused AI
+    
+    **Env:** `VENICE_API_KEY`
+  </Card>
+</CardGroup>
+
+### China-Based Providers
+
+<AccordionGroup>
+  <Accordion title="GLM (Zhipu)" icon="cn">
+    ```toml
+    api_key = "..."
+    default_provider = "glm"  # or "glm-cn" for China endpoint
+    default_model = "glm-4-plus"
+    ```
+
+    **Aliases:** `zhipu`, `glm-global`, `glm-cn`, `bigmodel`
+    
+    **Environment:** `GLM_API_KEY`
+  </Accordion>
+
+  <Accordion title="Moonshot (Kimi)" icon="moon">
+    ```toml
+    api_key = "..."
+    default_provider = "moonshot"  # or "moonshot-intl"
+    default_model = "moonshot-v1-8k"
+    ```
+
+    **Aliases:** `kimi`, `moonshot-cn`, `moonshot-intl`
+    
+    **Environment:** `MOONSHOT_API_KEY`
+  </Accordion>
+
+  <Accordion title="Qwen (DashScope)" icon="aliyun">
+    ```toml
+    api_key = "..."
+    default_provider = "qwen"  # or "qwen-intl", "qwen-us"
+    default_model = "qwen-turbo"
+    ```
+
+    **Aliases:** `dashscope`, `qwen-cn`, `qwen-intl`, `qwen-us`
+    
+    **Environment:** `DASHSCOPE_API_KEY`
+  </Accordion>
+
+  <Accordion title="MiniMax" icon="m">
+    ```toml
+    api_key = "..."
+    default_provider = "minimax"  # or "minimax-cn"
+    default_model = "abab6.5-chat"
+    ```
+
+    **Aliases:** `minimax-intl`, `minimax-cn`, `minimaxi`
+    
+    **Environment:** `MINIMAX_API_KEY`
+  </Accordion>
+
+  <Accordion title="Qianfan (Baidu)" icon="baidu">
+    ```toml
+    api_key = "..."
+    default_provider = "qianfan"
+    default_model = "ernie-bot-4"
+    ```
+
+    **Aliases:** `baidu`
+    
+    **Environment:** `QIANFAN_API_KEY`
+  </Accordion>
+</AccordionGroup>
+
+## Custom Endpoints
+
+### OpenAI-Compatible Endpoints
+
+Connect to any OpenAI-compatible API:
+
+```toml
+default_provider = "custom:https://your-api.com"
+default_model = "your-model-name"
+api_key = "your-key"
+```
+
+**Examples:**
+
+```toml
+# Local LM Studio
+default_provider = "custom:http://localhost:1234/v1"
+
+# Cloudflare AI Gateway
+default_provider = "custom:https://gateway.ai.cloudflare.com/v1"
+
+# Self-hosted vLLM
+default_provider = "custom:https://llm.company.com/v1"
+```
+
+### Anthropic-Compatible Endpoints
+
+For Anthropic-compatible custom endpoints:
+
+```toml
+default_provider = "anthropic-custom:https://your-api.com"
+default_model = "claude-compatible-model"
+api_key = "your-key"
+```
+
+### Remote Ollama
+
+Connect to a remote Ollama instance:
+
+```toml
+default_provider = "ollama"
+api_url = "http://10.0.0.1:11434"
+default_model = "llama3.3:70b"
+```
+
+## Provider Configuration Fields
+
+<ParamField path="api_key" type="string" optional>
+  Primary API key for authentication. Automatically encrypted when `secrets.encrypt = true`.
+  
+  Can be overridden by provider-specific environment variables.
+</ParamField>
+
+<ParamField path="api_url" type="string" optional>
+  Custom base URL for provider API. Useful for:
+  - Remote Ollama instances
+  - Self-hosted endpoints
+  - Custom proxy servers
+</ParamField>
+
+<ParamField path="default_provider" type="string" default="openrouter">
+  Default AI provider to use. Must match a supported provider name or custom endpoint format.
+</ParamField>
+
+<ParamField path="default_model" type="string" default="anthropic/claude-sonnet-4">
+  Default model to use with the provider. Format varies by provider:
+  - OpenRouter: `provider/model-name`
+  - Direct providers: `model-name`
+</ParamField>
+
+<ParamField path="default_temperature" type="number" default={0.7}>
+  Default temperature for model inference (0.0-2.0).
+  - Lower values (0.0-0.3): More deterministic, focused
+  - Medium values (0.4-0.8): Balanced creativity
+  - Higher values (0.9-2.0): More creative, varied
+</ParamField>
+
+## Reliability Configuration
+
+Configure automatic retry and fallback behavior:
+
+```toml
+[reliability]
+provider_retries = 2
+provider_backoff_ms = 500
+fallback_providers = ["anthropic", "openai"]
+
+# Additional API keys for round-robin on rate limits
+api_keys = ["sk-key2...", "sk-key3..."]
+
+# Per-model fallbacks
+[reliability.model_fallbacks]
+"claude-opus-4-20250514" = ["claude-sonnet-4-20250514", "gpt-4o"]
+```
+
+<ParamField path="reliability.provider_retries" type="number" default={2}>
+  Number of retries per provider before failing over to the next provider.
+</ParamField>
+
+<ParamField path="reliability.provider_backoff_ms" type="number" default={500}>
+  Base backoff delay in milliseconds between retries.
+</ParamField>
+
+<ParamField path="reliability.fallback_providers" type="string[]" default={[]}>
+  List of fallback providers to try if the primary provider fails.
+</ParamField>
+
+<ParamField path="reliability.api_keys" type="string[]" default={[]}>
+  Additional API keys for round-robin rotation on rate-limit (429) errors.
+</ParamField>
+
+<ParamField path="reliability.model_fallbacks" type="object" default={{}}>
+  Per-model fallback chains. When a specific model fails, try these alternatives in order.
+</ParamField>
+
+## Model Routing
+
+Route different tasks to specialized models:
+
+```toml
+[[model_routes]]
+hint = "reasoning"
+provider = "openrouter"
+model = "anthropic/claude-opus-4-20250514"
+
+[[model_routes]]
+hint = "fast"
+provider = "groq"
+model = "llama-3.3-70b-versatile"
+
+[[model_routes]]
+hint = "code"
+provider = "openai"
+model = "gpt-4o"
+api_key = "sk-code-specific-key..."  # Optional override
+```
+
+**Usage:** Pass `hint:reasoning` as the model parameter to route the request:
+
+```bash
+corvus agent -m "Solve this complex problem" --model hint:reasoning
+```
+
+## Query Classification
+
+Automatically classify queries and route to appropriate models:
+
+```toml
+[query_classification]
+enabled = true
+
+[[query_classification.rules]]
+hint = "code"
+keywords = ["code", "function", "debug", "implement"]
+patterns = ["```", "def ", "fn "]
+min_length = 10
+priority = 10
+
+[[query_classification.rules]]
+hint = "fast"
+max_length = 50
+priority = 5
+```
+
+<ParamField path="query_classification.enabled" type="boolean" default={false}>
+  Enable automatic query classification based on content.
+</ParamField>
+
+<ParamField path="query_classification.rules" type="array" default={[]}>
+  Classification rules. Each rule maps message patterns to a model hint.
+  
+  **Rule fields:**
+  - `hint`: Model route hint to use
+  - `keywords`: Case-insensitive substring matches
+  - `patterns`: Case-sensitive literal matches
+  - `min_length`: Only match if message length &gt;= N chars
+  - `max_length`: Only match if message length &lt;= N chars
+  - `priority`: Higher priority rules are checked first
+</ParamField>
+
+## Environment Variable Reference
+
+### Provider-Specific Variables
+
+| Provider | Environment Variables |
+|----------|----------------------|
+| OpenRouter | `OPENROUTER_API_KEY` |
+| Anthropic | `ANTHROPIC_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Ollama | `OLLAMA_API_KEY` (optional) |
+| Groq | `GROQ_API_KEY` |
+| Mistral | `MISTRAL_API_KEY` |
+| xAI | `XAI_API_KEY` |
+| DeepSeek | `DEEPSEEK_API_KEY` |
+| Together AI | `TOGETHER_API_KEY` |
+| Fireworks AI | `FIREWORKS_API_KEY` |
+| Perplexity | `PERPLEXITY_API_KEY` |
+| Cohere | `COHERE_API_KEY` |
+| GitHub Copilot | `GITHUB_TOKEN`, `GH_TOKEN` |
+| NVIDIA NIM | `NVIDIA_API_KEY` |
+| Venice | `VENICE_API_KEY` |
+| GLM | `GLM_API_KEY` |
+| Moonshot | `MOONSHOT_API_KEY` |
+| Qwen | `DASHSCOPE_API_KEY` |
+| MiniMax | `MINIMAX_API_KEY` |
+| Qianfan | `QIANFAN_API_KEY` |
+| Z.AI | `ZAI_API_KEY` |
+
+### Fallback Variables
+
+These apply to all providers if provider-specific variables are not set:
+
+- `CORVUS_API_KEY`
+- `API_KEY`
+
+## Complete Example
+
+```toml
+# Primary provider configuration
+api_key = "enc:..."
+default_provider = "openrouter"
+default_model = "anthropic/claude-sonnet-4-20250514"
+default_temperature = 0.7
+
+# Reliability and fallback
+[reliability]
+provider_retries = 2
+provider_backoff_ms = 500
+fallback_providers = ["anthropic", "openai"]
+api_keys = ["sk-backup1...", "sk-backup2..."]
+
+[reliability.model_fallbacks]
+"claude-opus-4-20250514" = ["claude-sonnet-4-20250514"]
+
+# Model routing for specialized tasks
+[[model_routes]]
+hint = "reasoning"
+provider = "openrouter"
+model = "anthropic/claude-opus-4-20250514"
+
+[[model_routes]]
+hint = "fast"
+provider = "groq"
+model = "llama-3.3-70b-versatile"
+
+[[model_routes]]
+hint = "code"
+provider = "openai"
+model = "gpt-4o"
+
+# Automatic classification
+[query_classification]
+enabled = true
+
+[[query_classification.rules]]
+hint = "code"
+keywords = ["code", "function", "debug"]
+priority = 10
+```
+
+## Next Steps
+
+<Card title="Channel Configuration" icon="comments" href="/configuration/channels">
+  Configure messaging channels for multi-platform access
+</Card>

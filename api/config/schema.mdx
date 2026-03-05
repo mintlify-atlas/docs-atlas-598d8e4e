@@ -1,0 +1,203 @@
+---
+title: 'Configuration Schema'
+description: 'Complete reference for config.toml'
+icon: 'file-code'
+---
+
+# Configuration Schema
+
+Corvus uses a TOML configuration file located at `~/.corvus/config.toml`.
+
+Generate with:
+
+```bash
+corvus onboard
+```
+
+## Complete Example
+
+```toml
+api_key = "sk-..."
+default_provider = "openrouter"
+default_model = "anthropic/claude-sonnet-4-20250514"
+default_temperature = 0.7
+
+[memory]
+backend = "sqlite"
+auto_save = true
+embedding_provider = "openai"
+vector_weight = 0.7
+keyword_weight = 0.3
+
+[memory.surreal]
+url = "http://127.0.0.1:8000"
+namespace = "corvus"
+database = "memory"
+allow_http_loopback = true
+
+[gateway]
+port = 8080
+host = "127.0.0.1"
+require_pairing = true
+allow_public_bind = false
+
+[autonomy]
+level = "supervised"
+workspace_only = true
+allowed_commands = ["git", "npm", "cargo", "ls", "cat", "grep"]
+forbidden_paths = ["/etc", "/root", "/proc", "/sys", "~/.ssh", "~/.gnupg", "~/.aws"]
+max_actions_per_hour = 100
+max_cost_per_day_cents = 500
+
+[runtime]
+kind = "native"
+
+[runtime.docker]
+image = "alpine:3.20"
+network = "none"
+memory_limit_mb = 512
+cpu_limit = 1.0
+read_only_rootfs = true
+mount_workspace = true
+
+[heartbeat]
+enabled = false
+interval_minutes = 30
+
+[tunnel]
+provider = "none"
+
+[secrets]
+encrypt = true
+
+[browser]
+enabled = false
+allowed_domains = ["docs.rs"]
+
+[composio]
+enabled = false
+
+[observability]
+backend = "log"
+
+[identity]
+format = "openclaw"
+
+[channels_config.telegram]
+bot_token = "..."
+allowed_users = ["alice", "bob"]
+
+[channels_config.discord]
+bot_token = "..."
+allowed_users = ["123456789012345678"]
+
+[channels_config.slack]
+bot_token = "..."
+app_token = "..."
+allowed_users = ["U01234567"]
+
+[channels_config.whatsapp]
+access_token = "EAABx..."
+phone_number_id = "123456789012345"
+verify_token = "my-secret-verify-token"
+allowed_numbers = ["+1234567890"]
+
+[peripherals]
+enabled = false
+boards = []
+```
+
+## Root Fields
+
+<ParamField path="api_key" type="string" required>
+  Primary API key for default provider
+</ParamField>
+
+<ParamField path="default_provider" type="string" default="openrouter">
+  AI provider: `openai`, `anthropic`, `openrouter`, `ollama`, etc.
+</ParamField>
+
+<ParamField path="default_model" type="string">
+  Model name (provider-specific)
+</ParamField>
+
+<ParamField path="default_temperature" type="float" default="0.7">
+  Temperature (0.0 - 2.0)
+</ParamField>
+
+## [memory]
+
+<ParamField path="backend" type="string" default="sqlite">
+  Backend: `sqlite`, `surreal`, `markdown`, `none`
+</ParamField>
+
+<ParamField path="auto_save" type="boolean" default="true">
+  Automatically save memories
+</ParamField>
+
+<ParamField path="embedding_provider" type="string" default="openai">
+  Embedding provider: `openai`, `noop`
+</ParamField>
+
+<ParamField path="vector_weight" type="float" default="0.7">
+  Vector search weight (0.0 - 1.0)
+</ParamField>
+
+<ParamField path="keyword_weight" type="float" default="0.3">
+  Keyword search weight (0.0 - 1.0)
+</ParamField>
+
+## [autonomy]
+
+<ParamField path="level" type="string" default="supervised">
+  Autonomy level: `readonly`, `supervised`, `full`
+</ParamField>
+
+<ParamField path="workspace_only" type="boolean" default="true">
+  Restrict file access to workspace
+</ParamField>
+
+<ParamField path="allowed_commands" type="string[]">
+  Shell command allowlist
+</ParamField>
+
+<ParamField path="forbidden_paths" type="string[]">
+  Blocked filesystem paths
+</ParamField>
+
+<ParamField path="max_actions_per_hour" type="u32" default="100">
+  Rate limit for tool executions
+</ParamField>
+
+<ParamField path="max_cost_per_day_cents" type="u32" default="500">
+  Daily cost limit in cents
+</ParamField>
+
+## [runtime]
+
+<ParamField path="kind" type="string" default="native">
+  Runtime: `native`, `docker`
+</ParamField>
+
+## [gateway]
+
+<ParamField path="port" type="u16" default="8080">
+  Gateway port
+</ParamField>
+
+<ParamField path="host" type="string" default="127.0.0.1">
+  Gateway host
+</ParamField>
+
+<ParamField path="require_pairing" type="boolean" default="true">
+  Require pairing code
+</ParamField>
+
+<ParamField path="allow_public_bind" type="boolean" default="false">
+  Allow binding to 0.0.0.0 without tunnel
+</ParamField>
+
+## Related
+
+- [Environment Variables](/api/config/environment)
+- [CLI Commands](/api/cli/commands)

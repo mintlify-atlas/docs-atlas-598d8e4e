@@ -1,0 +1,561 @@
+---
+title: Custom Providers
+description: Configure custom OpenAI-compatible and Anthropic-compatible endpoints in Corvus
+---
+
+Corvus supports custom provider endpoints for both OpenAI-compatible and Anthropic-compatible APIs, enabling integration with private deployments, proxies, and third-party LLM gateways.
+
+## OpenAI-Compatible Custom Endpoints
+
+### Configuration Format
+
+Use the `custom:` prefix followed by your API base URL:
+
+```toml
+[runtime]
+provider = "custom:https://your-api.example.com"
+model = "your-model-name"
+temperature = 0.7
+
+[runtime.provider_config]
+api_key = "your-api-key"
+```
+
+Or via environment variable:
+
+```bash
+export API_KEY="your-api-key"
+corvus run --provider "custom:https://your-api.example.com" --model "your-model"
+```
+
+### URL Parsing and Validation
+
+From `~/workspace/source/clients/agent-runtime/src/providers/mod.rs:358`:
+
+```rust
+fn parse_custom_provider_url(
+    raw_url: &str,
+    provider_label: &str,
+    format_hint: &str,
+) -> anyhow::Result<String> {
+    let base_url = raw_url.trim();
+
+    // Validate URL is not empty
+    if base_url.is_empty() {
+        anyhow::bail!("{provider_label} requires a URL. Format: {format_hint}");
+    }
+
+    // Parse URL to validate format
+    let parsed = reqwest::Url::parse(base_url).map_err(|_| {
+        anyhow::anyhow!("{provider_label} requires a valid URL. Format: {format_hint}")
+    })?;
+
+    // Only allow http:// or https://
+    match parsed.scheme() {
+        "http" | "https" => Ok(base_url.to_string()),
+        _ => anyhow::bail!(
+            "{provider_label} requires an http:// or https:// URL. Format: {format_hint}"
+        ),
+    }
+}
+```
+
+### Supported URL Formats
+
+#### Base URL Only
+
+The provider appends `/chat/completions` automatically:
+
+```
+custom:https://api.example.com
+→ https://api.example.com/chat/completions
+```
+
+#### With Version Path
+
+```
+custom:https://api.example.com/v1
+→ https://api.example.com/v1/chat/completions
+```
+
+#### Full Endpoint Path
+
+If the URL already ends with `/chat/completions`, it's used as-is:
+
+```
+custom:https://api.example.com/v1/chat/completions
+→ https://api.example.com/v1/chat/completions (unchanged)
+```
+
+#### Localhost and HTTP
+
+For local development:
+
+```
+custom:http://localhost:8000
+custom:http://127.0.0.1:8080
+custom:http://192.168.1.100:11434
+```
+
+### Authentication Options
+
+Custom providers use **Bearer token authentication** by default:
+
+```http
+Authorization: Bearer your-api-key
+```
+
+**Credential resolution order:**
+
+1. Explicit `api_key` in config
+2. Provider-specific environment variable (if mapped)
+3. `CORVUS_API_KEY`
+4. `API_KEY`
+
+Some endpoints may not require authentication - simply omit the `api_key`:
+
+```toml
+[runtime]
+provider = "custom:http://localhost:11434"  # No auth required
+```
+
+## Example Implementations
+
+### LiteLLM Proxy
+
+LiteLLM provides a unified OpenAI-compatible interface to 100+ LLMs:
+
+```bash
+# Start LiteLLM proxy
+litellm --model claude-3-opus-20240229 --api_key $ANTHROPIC_API_KEY
+```
+
+```toml
+[runtime]
+provider = "custom:http://localhost:8000"
+model = "claude-3-opus-20240229"
+
+[runtime.provider_config]
+api_key = "sk-1234"  # LiteLLM proxy key
+```
+
+### Ollama (Remote)
+
+Connect to a remote Ollama instance:
+
+```toml
+[runtime]
+provider = "custom:http://10.0.0.5:11434/v1"
+model = "qwen2.5-coder:32b"
+# No api_key needed for Ollama
+```
+
+Or use the dedicated Ollama provider with custom URL:
+
+```rust
+use corvus_runtime::providers::create_provider_with_url;
+
+let provider = create_provider_with_url(
+    "ollama",
+    None,
+    Some("http://10.0.0.5:11434"),
+)?;
+```
+
+### vLLM Server
+
+vLLM provides OpenAI-compatible serving:
+
+```bash
+# Start vLLM server
+python -m vllm.entrypoints.openai.api_server \
+    --model meta-llama/Llama-2-7b-chat-hf \
+    --port 8000
+```
+
+```toml
+[runtime]
+provider = "custom:http://localhost:8000/v1"
+model = "meta-llama/Llama-2-7b-chat-hf"
+```
+
+### LocalAI
+
+LocalAI compatible setup:
+
+```toml
+[runtime]
+provider = "custom:http://localhost:8080/v1"
+model = "gpt-3.5-turbo"  # LocalAI model alias
+
+[runtime.provider_config]
+api_key = "your-localai-key"
+```
+
+### Azure OpenAI
+
+For Azure OpenAI deployments:
+
+```toml
+[runtime]
+provider = "custom:https://your-resource.openai.azure.com/openai/deployments/your-deployment"
+model = "gpt-4"
+
+[runtime.provider_config]
+api_key = "your-azure-api-key"
+```
+
+### OpenRouter (Direct)
+
+While OpenRouter has a dedicated provider, you can also use custom:
+
+```toml
+[runtime]
+provider = "custom:https://openrouter.ai/api/v1"
+model = "anthropic/claude-3.5-sonnet"
+
+[runtime.provider_config]
+api_key = "sk-or-v1-..."
+```
+
+## Anthropic-Compatible Custom Endpoints
+
+### Configuration Format
+
+Use the `anthropic-custom:` prefix:
+
+```toml
+[runtime]
+provider = "anthropic-custom:https://your-anthropic-proxy.example.com"
+model = "claude-3-5-sonnet-20241022"
+
+[runtime.provider_config]
+api_key = "your-api-key"
+```
+
+### Implementation
+
+From `~/workspace/source/clients/agent-runtime/src/providers/mod.rs:552`:
+
+```rust
+// Format: "anthropic-custom:https://your-api.com"
+name if name.starts_with("anthropic-custom:") => {
+    let base_url = parse_custom_provider_url(
+        name.strip_prefix("anthropic-custom:").unwrap_or(""),
+        "Anthropic-custom provider",
+        "anthropic-custom:https://your-api.com",
+    )?;
+    Ok(Box::new(anthropic::AnthropicProvider::with_base_url(
+        key,
+        Some(&base_url),
+    )))
+}
+```
+
+### Use Cases
+
+#### Anthropic Proxy
+
+For rate limiting or monitoring:
+
+```toml
+[runtime]
+provider = "anthropic-custom:https://proxy.example.com"
+model = "claude-3-5-sonnet-20241022"
+```
+
+#### AWS Bedrock (via proxy)
+
+```toml
+[runtime]
+provider = "anthropic-custom:https://bedrock-proxy.example.com"
+model = "anthropic.claude-3-sonnet-20240229-v1:0"
+```
+
+## Programmatic Usage
+
+### Basic Custom Provider
+
+```rust
+use corvus_runtime::providers::create_provider;
+
+let provider = create_provider(
+    "custom:https://api.example.com/v1",
+    Some("api-key-123"),
+)?;
+
+let response = provider
+    .simple_chat("Hello", "model-name", 0.7)
+    .await?;
+```
+
+### Advanced with Compatible Provider
+
+Direct construction for more control:
+
+```rust
+use corvus_runtime::providers::compatible::{OpenAiCompatibleProvider, AuthStyle};
+
+let provider = OpenAiCompatibleProvider::new(
+    "MyCustomLLM",                        // Display name
+    "https://api.example.com/v1",        // Base URL
+    Some("api-key-123"),                  // API key
+    AuthStyle::Bearer,                    // Auth style
+);
+
+// Use like any other provider
+let response = provider
+    .simple_chat("Explain Rust", "model-v1", 0.7)
+    .await?;
+```
+
+### Custom Authentication Styles
+
+For providers with non-standard auth:
+
+```rust
+use corvus_runtime::providers::compatible::{OpenAiCompatibleProvider, AuthStyle};
+
+// Bearer token (default, most common)
+let provider = OpenAiCompatibleProvider::new(
+    "Provider1",
+    "https://api.example.com",
+    Some("key"),
+    AuthStyle::Bearer,  // Authorization: Bearer key
+);
+
+// x-api-key header (some Chinese providers)
+let provider = OpenAiCompatibleProvider::new(
+    "Provider2",
+    "https://api.example.cn",
+    Some("key"),
+    AuthStyle::XApiKey,  // x-api-key: key
+);
+
+// Custom header name
+let provider = OpenAiCompatibleProvider::new(
+    "Provider3",
+    "https://api.example.com",
+    Some("key"),
+    AuthStyle::Custom("X-Custom-Auth".to_string()),
+);
+```
+
+## Advanced Configuration
+
+### Non-Standard Endpoint Paths
+
+Some providers use custom paths instead of `/v1/chat/completions`:
+
+```rust
+// VolcEngine ARK uses /api/coding/v3/chat/completions
+let provider = create_provider(
+    "custom:https://ark.volcengineapi.com/api/coding/v3/chat/completions",
+    Some("api-key"),
+)?;
+```
+
+The provider detects the full path and uses it as-is.
+
+### Disable Responses API Fallback
+
+Some providers don't support the `/v1/responses` endpoint:
+
+```rust
+use corvus_runtime::providers::compatible::{OpenAiCompatibleProvider, AuthStyle};
+
+let provider = OpenAiCompatibleProvider::new_no_responses_fallback(
+    "GLM",
+    "https://open.bigmodel.cn/api/paas/v4",
+    Some("api-key"),
+    AuthStyle::Bearer,
+);
+```
+
+### Custom Timeouts
+
+Custom providers inherit these defaults:
+- Request timeout: 120 seconds
+- Connect timeout: 10 seconds
+
+### With Resilient Provider Chain
+
+Use custom providers with automatic failover:
+
+```toml
+[runtime]
+provider = "custom:https://primary.example.com"
+
+[runtime.reliability]
+fallback_providers = [
+    "custom:https://backup1.example.com",
+    "custom:https://backup2.example.com",
+    "openai",  # Mix with built-in providers
+]
+provider_retries = 3
+provider_backoff_ms = 1000
+```
+
+## Validation and Error Handling
+
+### URL Validation Errors
+
+```
+Error: Custom provider requires a URL. Format: custom:https://your-api.com
+```
+
+**Cause:** Empty URL after `custom:` prefix.
+
+**Solution:** Provide a valid URL.
+
+```
+Error: Custom provider requires a valid URL. Format: custom:https://your-api.com
+```
+
+**Cause:** Malformed URL (missing scheme, invalid syntax).
+
+**Solution:** Ensure URL is properly formatted.
+
+```
+Error: Custom provider requires an http:// or https:// URL. Format: custom:https://your-api.com
+```
+
+**Cause:** Unsupported scheme (e.g., `ftp://`, `ws://`).
+
+**Solution:** Use `http://` or `https://`.
+
+### Testing Custom Endpoints
+
+Verify your endpoint works:
+
+```bash
+curl https://your-api.example.com/v1/chat/completions \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "your-model",
+    "messages": [{"role": "user", "content": "test"}],
+    "temperature": 0.7
+  }'
+```
+
+## Best Practices
+
+1. **Test endpoints manually** before configuring Corvus
+2. **Use https://** for production deployments
+3. **Store API keys in environment variables**, not config files
+4. **Use dedicated Ollama provider** instead of custom for Ollama servers
+5. **Enable fallback providers** for reliability
+6. **Document custom provider details** for your team
+7. **Monitor endpoint health** and response times
+8. **Use rate limiting** on custom proxies
+9. **Implement authentication** for production endpoints
+10. **Version your API endpoints** (e.g., `/v1`, `/v2`)
+
+## Common Use Cases
+
+### Development and Testing
+
+```toml
+# Local LLM proxy for testing
+[runtime]
+provider = "custom:http://localhost:8000"
+model = "test-model"
+```
+
+### On-Premise Deployment
+
+```toml
+# Internal LLM gateway
+[runtime]
+provider = "custom:https://llm-gateway.corp.internal/v1"
+model = "company-llama-70b"
+
+[runtime.provider_config]
+api_key = "${CORP_LLM_KEY}"
+```
+
+### Multi-Region Routing
+
+```toml
+[runtime]
+provider = "custom:https://us-west.llm.example.com"
+
+[runtime.reliability]
+fallback_providers = [
+    "custom:https://us-east.llm.example.com",
+    "custom:https://eu-west.llm.example.com",
+    "openai",  # Final fallback to OpenAI
+]
+```
+
+### Cost Optimization Gateway
+
+```toml
+# Proxy that routes to cheapest provider
+[runtime]
+provider = "custom:https://llm-router.example.com"
+model = "auto"  # Proxy selects best model
+```
+
+## Security Considerations
+
+1. **Validate SSL certificates** in production (automatic with `https://`)
+2. **Use strong API keys** for authentication
+3. **Rotate credentials** regularly
+4. **Monitor access logs** on custom endpoints
+5. **Implement rate limiting** to prevent abuse
+6. **Use firewalls** to restrict endpoint access
+7. **Encrypt credentials** at rest (Corvus supports encrypted secrets)
+8. **Never commit API keys** to version control
+9. **Use environment variables** or secret management systems
+10. **Audit custom provider usage** regularly
+
+## Troubleshooting
+
+### Connection Refused
+
+```
+Error: Connection refused
+```
+
+**Solution:** Verify the endpoint is running and accessible.
+
+### SSL/TLS Errors
+
+```
+Error: SSL certificate verification failed
+```
+
+**Solution:**
+- Ensure the endpoint has a valid SSL certificate
+- For development, use `http://localhost` instead
+
+### Authentication Errors
+
+```
+Error: 401 Unauthorized
+```
+
+**Solution:**
+- Verify the API key is correct
+- Check the authentication method (Bearer vs x-api-key)
+
+### Model Not Found
+
+```
+Error: 404 Model not found
+```
+
+**Solution:**
+- Verify the model name matches what the endpoint expects
+- Check endpoint documentation for available models
+
+## See Also
+
+- [Provider Overview](/guides/providers/overview)
+- [OpenAI Provider](/guides/providers/openai)
+- [Anthropic Provider](/guides/providers/anthropic)
+- [Ollama Configuration](/guides/providers/ollama)
+- [Configuration Reference](/reference/configuration)
+- [Security Best Practices](/guides/security/overview)

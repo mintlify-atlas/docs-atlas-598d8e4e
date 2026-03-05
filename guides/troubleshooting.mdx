@@ -1,0 +1,697 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Corvus
+---
+
+## Doctor Command
+
+The `corvus doctor` command runs **system diagnostics** to identify configuration and health issues.
+
+### Running Diagnostics
+
+**Full system check:**
+```bash
+corvus doctor
+```
+
+**Channel health check:**
+```bash
+corvus channel doctor
+```
+
+**Status overview:**
+```bash
+corvus status
+```
+
+### What Doctor Checks
+
+**Configuration:**
+- Config file exists and is valid TOML
+- Required fields are present
+- API keys are set (not expired)
+- Workspace directory exists
+
+**Memory Backend:**
+- SQLite database is accessible
+- SurrealDB connection works (if configured)
+- Memory operations can be performed
+
+**Channels:**
+- Channel credentials are valid
+- API tokens work
+- Network connectivity to services
+- Channel allowlists are configured
+
+**Gateway:**
+- Port is available
+- Pairing is configured
+- Tunnel is active (if required)
+
+**Runtime:**
+- Docker daemon is running (if `runtime.kind = "docker"`)
+- Workspace is readable/writable
+- Sandboxing is available
+
+### Example Output
+
+**Healthy system:**
+```
+✓ Config loaded from ~/.corvus/config.toml
+✓ Workspace directory: /home/user/project
+✓ Memory backend: sqlite (512 entries)
+✓ Provider: openrouter (claude-sonnet-4)
+✓ Channels: telegram (healthy), discord (healthy)
+✓ Gateway: listening on 127.0.0.1:8080
+✓ Runtime: native
+✓ All systems operational
+```
+
+**Issues detected:**
+```
+✓ Config loaded from ~/.corvus/config.toml
+✗ Memory backend: sqlite (database locked)
+✗ Channel: telegram (bot token invalid)
+⚠ Gateway: not running (start with `corvus gateway`)
+✓ Runtime: docker (healthy)
+
+2 errors, 1 warning
+```
+
+## Common Issues
+
+### 1. Channel Authorization Problems
+
+**Problem:**
+```
+WARN Telegram: ignoring message from unauthorized user @alice (123456789)
+```
+
+**Cause:**
+- Channel allowlist is empty or doesn't include the sender
+- Sender identity doesn't match allowlist format
+
+**Solution:**
+```bash
+# 1. Identify the sender from the warning log
+# Telegram: @username or numeric user ID
+# Discord: numeric user ID
+# Slack: member ID (starts with U)
+
+# 2. Update channel allowlist
+corvus onboard --channels-only
+# Follow prompts to add the sender identity
+
+# Or edit config.toml directly:
+```
+
+```toml
+[channels_config.telegram]
+allowed_users = ["@alice", "123456789"]
+
+[channels_config.discord]
+allowed_users = ["987654321"]  # Discord user ID
+
+[channels_config.slack]
+allowed_members = ["U123456"]  # Slack member ID
+```
+
+**Quick fix for testing:**
+```toml
+# Allow all senders (NOT RECOMMENDED for production)
+[channels_config.telegram]
+allowed_users = ["*"]
+```
+
+### 2. Memory Backend Issues
+
+**Problem: SQLite database locked**
+```
+Error: database is locked
+```
+
+**Cause:**
+- Another Corvus process is using the database
+- Stale lock file
+- Database corruption
+
+**Solution:**
+```bash
+# 1. Check for other Corvus processes
+ps aux | grep corvus
+killall corvus
+
+# 2. Remove lock file
+rm ~/.corvus/memory.db-wal
+rm ~/.corvus/memory.db-shm
+
+# 3. Test database
+sqlite3 ~/.corvus/memory.db "PRAGMA integrity_check;"
+
+# 4. Rebuild if corrupted
+rm ~/.corvus/memory.db
+corvus agent -m "test"  # will recreate
+```
+
+**Problem: SurrealDB connection failed**
+```
+Error: failed to connect to SurrealDB at http://127.0.0.1:8000
+```
+
+**Cause:**
+- SurrealDB server not running
+- Wrong URL in config
+- Network connectivity issue
+
+**Solution:**
+```bash
+# 1. Start SurrealDB
+docker run -d \
+  --name surrealdb \
+  -p 8000:8000 \
+  surrealdb/surrealdb:latest start
+
+# 2. Test connection
+curl http://127.0.0.1:8000/health
+
+# 3. Verify config
+```
+
+```toml
+[memory]
+backend = "surreal"
+
+[memory.surreal]
+url = "http://127.0.0.1:8000"
+namespace = "corvus"
+database = "memory"
+allow_http_loopback = true
+```
+
+### 3. Gateway Port Already in Use
+
+**Problem:**
+```
+Error: Address already in use (os error 98)
+```
+
+**Cause:**
+- Another daemon/gateway instance is already running
+- Port is used by another service
+
+**Solution:**
+```bash
+# 1. Check what's using the port
+lsof -i :8080
+# or
+netstat -tulpn | grep 8080
+
+# 2. Stop the conflicting process
+corvus service stop
+# or
+kill <PID>
+
+# 3. Use a different port
+corvus gateway --port 8081
+
+# Or use random port
+corvus gateway --port 0
+```
+
+**After binary upgrade:**
+```bash
+# Restart the service (don't start a second instance)
+corvus service restart
+```
+
+### 4. API Key Issues
+
+**Problem:**
+```
+Error: API key is invalid or expired
+```
+
+**Cause:**
+- API key is incorrect
+- API key expired
+- Wrong provider configuration
+
+**Solution:**
+```bash
+# 1. Re-run onboarding
+corvus onboard --api-key sk-... --provider openrouter
+
+# 2. Or update config.toml directly
+```
+
+```toml
+api_key = "sk-your-new-key"
+default_provider = "openrouter"
+default_model = "anthropic/claude-sonnet-4-20250514"
+```
+
+**Problem: Encrypted secrets key missing**
+```
+Error: Failed to decrypt API key - secrets key file not found
+```
+
+**Cause:**
+- `~/.corvus/secrets.key` was deleted
+- Config copied to another machine
+
+**Solution:**
+```bash
+# Disable encryption and reset key
+```
+
+```toml
+[secrets]
+encrypt = false
+```
+
+```bash
+# Re-run onboarding
+corvus onboard --api-key sk-...
+```
+
+### 5. Docker Runtime Issues
+
+**Problem: Docker daemon not running**
+```
+Error: Cannot connect to the Docker daemon at unix:///var/run/docker.sock
+```
+
+**Cause:**
+- Docker daemon not started
+- User not in `docker` group
+- Docker socket permissions
+
+**Solution:**
+```bash
+# 1. Start Docker
+sudo systemctl start docker
+
+# 2. Add user to docker group
+sudo usermod -aG docker $USER
+newgrp docker
+
+# 3. Test Docker
+docker ps
+```
+
+**Problem: Image pull failed**
+```
+Error: Unable to find image 'alpine:3.20' locally
+```
+
+**Cause:**
+- No network access
+- Docker Hub rate limit
+- Image doesn't exist
+
+**Solution:**
+```bash
+# 1. Pull image manually
+docker pull alpine:3.20
+
+# 2. Or use a different image
+```
+
+```toml
+[runtime.docker]
+image = "ubuntu:22.04"
+```
+
+### 6. Command Not Allowed
+
+**Problem:**
+```
+Error: Command not allowed by security policy: python3
+```
+
+**Cause:**
+- Command not in `allowed_commands` list
+- Security policy is too restrictive
+
+**Solution:**
+```bash
+# 1. Add command to allowlist
+```
+
+```toml
+[autonomy]
+allowed_commands = [
+  "git", "npm", "cargo",
+  "python3",  # add this
+  "ls", "cat", "grep"
+]
+```
+
+**Problem: High-risk command blocked**
+```
+Error: Command blocked: high-risk command is disallowed by policy
+```
+
+**Cause:**
+- Command classified as high-risk (rm, curl, sudo, etc.)
+- `block_high_risk_commands = true`
+
+**Solution:**
+```toml
+[autonomy]
+block_high_risk_commands = false  # use with caution
+```
+
+### 7. Path Not Allowed
+
+**Problem:**
+```
+Error: Path not allowed by security policy: /etc/hosts
+```
+
+**Cause:**
+- Absolute path when `workspace_only = true`
+- Path in `forbidden_paths` list
+- Path traversal detected
+
+**Solution:**
+```bash
+# 1. Use relative paths
+file_read src/main.rs  # not /home/user/project/src/main.rs
+
+# 2. Or disable workspace_only (use with caution)
+```
+
+```toml
+[autonomy]
+workspace_only = false
+```
+
+### 8. Rate Limit Exceeded
+
+**Problem:**
+```
+Error: Rate limit exceeded: action budget exhausted
+```
+
+**Cause:**
+- Too many actions in the last hour
+- `max_actions_per_hour` limit reached
+
+**Solution:**
+```bash
+# 1. Wait for the rate limit window to reset (1 hour)
+
+# 2. Or increase the limit
+```
+
+```toml
+[autonomy]
+max_actions_per_hour = 100  # increase from default 20
+```
+
+### 9. Gateway Pairing Failed
+
+**Problem:**
+```
+Error: Invalid pairing code
+```
+
+**Cause:**
+- Incorrect pairing code
+- Code already used
+- Code expired
+
+**Solution:**
+```bash
+# 1. Restart gateway to get a new code
+corvus gateway
+# 🔐 Gateway pairing code: 123456
+
+# 2. Use the new code
+curl -X POST http://127.0.0.1:8080/pair \
+  -H "X-Pairing-Code: 123456"
+```
+
+**Problem: Too many failed attempts**
+```
+Error: Too many failed attempts. Try again in 298s.
+```
+
+**Cause:**
+- 5 failed pairing attempts triggered lockout
+
+**Solution:**
+```bash
+# Wait 5 minutes, then retry
+```
+
+### 10. Service Won't Start
+
+**Problem:**
+```bash
+corvus service start
+# Error: Failed to start service
+```
+
+**Cause:**
+- Service not installed
+- Binary path incorrect
+- Config file missing
+
+**Solution:**
+```bash
+# 1. Reinstall service
+corvus service uninstall
+corvus service install
+
+# 2. Check service logs
+journalctl --user -u corvus -n 50
+
+# 3. Verify binary location
+which corvus
+
+# 4. Test manual start
+corvus daemon
+```
+
+## Debug Logging
+
+Enable verbose logging for detailed diagnostics:
+
+### Trace All Modules
+
+```bash
+export RUST_LOG=trace
+corvus daemon
+```
+
+### Trace Specific Modules
+
+```bash
+# Agent orchestration
+export RUST_LOG=corvus::agent=trace
+
+# Tool execution
+export RUST_LOG=corvus::tools=trace
+
+# Gateway and pairing
+export RUST_LOG=corvus::gateway=trace
+
+# Memory operations
+export RUST_LOG=corvus::memory=trace
+
+# Multiple modules
+export RUST_LOG=corvus::agent=trace,corvus::tools=debug
+```
+
+### Save Logs to File
+
+```bash
+corvus daemon 2>&1 | tee corvus.log
+```
+
+### Structured JSON Logs
+
+```bash
+export RUST_LOG_FORMAT=json
+corvus daemon > corvus.jsonl
+```
+
+## Performance Diagnostics
+
+### Slow Tool Execution
+
+**Problem:**
+Tools take too long to execute.
+
+**Diagnosis:**
+```bash
+# 1. Enable timing logs
+export RUST_LOG=corvus::tools=debug
+corvus agent -m "run ls"
+
+# 2. Check runtime config
+```
+
+```toml
+[runtime]
+kind = "native"  # faster than docker for most operations
+```
+
+**Solution:**
+- Use native runtime for development
+- Optimize Docker image (smaller base image)
+- Check network latency for remote operations
+
+### High Memory Usage
+
+**Problem:**
+Corvus uses more memory than expected.
+
+**Diagnosis:**
+```bash
+# Check memory usage
+ps aux | grep corvus
+top -p $(pgrep corvus)
+
+# Check memory backend size
+du -h ~/.corvus/memory.db
+```
+
+**Solution:**
+```bash
+# Clean up old memory entries
+corvus memory clean --older-than 30d
+
+# Or rebuild memory
+rm ~/.corvus/memory.db
+corvus memory reindex
+```
+
+### Slow Provider Responses
+
+**Problem:**
+LLM responses are slow.
+
+**Diagnosis:**
+```bash
+export RUST_LOG=corvus::providers=debug
+corvus agent -m "test"
+```
+
+**Solution:**
+- Check network latency to provider
+- Use a faster model
+- Switch providers
+- Check API rate limits
+
+## Configuration Validation
+
+### Validate Config File
+
+```bash
+# Check syntax
+corvus doctor
+
+# Or manually
+corvus config validate
+```
+
+### Export Config Template
+
+```bash
+# Export current config (redacted)
+corvus config export --redact > config.template.toml
+```
+
+### Reset to Defaults
+
+```bash
+# Backup current config
+cp ~/.corvus/config.toml ~/.corvus/config.toml.backup
+
+# Generate fresh config
+corvus onboard --interactive
+```
+
+## Network Connectivity
+
+### Test Provider Connection
+
+```bash
+# OpenRouter
+curl -H "Authorization: Bearer $CORVUS_API_KEY" \
+  https://openrouter.ai/api/v1/models
+
+# Anthropic
+curl -H "x-api-key: $CORVUS_API_KEY" \
+  https://api.anthropic.com/v1/messages
+
+# OpenAI
+curl -H "Authorization: Bearer $CORVUS_API_KEY" \
+  https://api.openai.com/v1/models
+```
+
+### Test Channel Connection
+
+```bash
+# Telegram
+curl https://api.telegram.org/bot$BOT_TOKEN/getMe
+
+# Discord
+curl -H "Authorization: Bot $BOT_TOKEN" \
+  https://discord.com/api/v10/users/@me
+```
+
+### Test Tunnel
+
+```bash
+# Tailscale
+tailscale status
+
+# ngrok
+curl http://127.0.0.1:4040/api/tunnels
+
+# Cloudflare
+cloudflared tunnel list
+```
+
+## Getting Help
+
+If you're still stuck:
+
+1. **Run diagnostics:**
+   ```bash
+   corvus doctor > diagnostics.txt
+   corvus status >> diagnostics.txt
+   ```
+
+2. **Collect logs:**
+   ```bash
+   export RUST_LOG=trace
+   corvus daemon 2>&1 | tee debug.log
+   ```
+
+3. **Open an issue:**
+   - [GitHub Issues](https://github.com/dallay/corvus/issues)
+   - Include diagnostics and logs
+   - Describe what you tried
+
+4. **Community:**
+   - [Discord](https://discord.gg/corvus)
+   - [GitHub Discussions](https://github.com/dallay/corvus/discussions)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Full configuration reference
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/guides/deployment">
+    Production deployment guide
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/guides/observability">
+    Monitoring and logging
+  </Card>
+</CardGroup>

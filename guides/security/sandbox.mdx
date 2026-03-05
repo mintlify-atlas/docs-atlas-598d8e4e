@@ -1,0 +1,291 @@
+---
+title: Sandbox Runtimes
+description: Docker isolation, native runtime security, and Linux sandboxing
+---
+
+## Runtime Adapters
+
+Corvus supports multiple runtime adapters for executing shell commands and tools. Each runtime provides different levels of isolation and security.
+
+```toml
+[runtime]
+kind = "native"  # "native" or "docker"
+```
+
+## Docker Sandbox Runtime
+
+The Docker runtime provides **lightweight container isolation** for all shell command execution.
+
+### Configuration
+
+```toml
+[runtime]
+kind = "docker"
+
+[runtime.docker]
+image = "alpine:3.20"       # container image
+network = "none"             # docker network mode
+memory_limit_mb = 512        # optional memory limit
+cpu_limit = 1.0              # optional CPU limit
+read_only_rootfs = true      # mount root filesystem as read-only
+mount_workspace = true       # mount workspace into /workspace
+allowed_workspace_roots = [] # optional allowlist for workspace mount
+```
+
+### Security Features
+
+**Network Isolation**
+```toml
+network = "none"  # no network access (recommended)
+```
+
+Options:
+- `none` — No network access (most secure)
+- `bridge` — Bridge network with internet access
+- `host` — Host network (not recommended)
+
+**Read-Only Root Filesystem**
+```toml
+read_only_rootfs = true
+```
+
+Makes the container root filesystem immutable. Only the mounted workspace is writable.
+
+**Resource Limits**
+```toml
+memory_limit_mb = 512  # limit memory usage
+cpu_limit = 1.0        # limit CPU cores
+```
+
+Prevents resource exhaustion attacks.
+
+**Workspace Mount Validation**
+```toml
+allowed_workspace_roots = ["/home/user/projects"]
+```
+
+Restricts which host directories can be mounted:
+- Empty list = any workspace allowed
+- Non-empty = only paths under these roots
+- Refuses to mount `/` (root filesystem)
+
+### How It Works
+
+When a shell command is executed:
+
+1. **Container Creation** — Ephemeral container spawned
+2. **Workspace Mount** — Host workspace mounted at `/workspace`
+3. **Command Execution** — Command runs inside container
+4. **Auto-Cleanup** — Container removed after execution (`--rm`)
+
+```bash
+# Generated Docker command:
+docker run --rm --init --interactive \
+  --network none \
+  --memory 512m \
+  --cpus 1.0 \
+  --read-only \
+  --volume /host/workspace:/workspace:rw \
+  --workdir /workspace \
+  alpine:3.20 sh -c "your command"
+```
+
+### Production Hardening
+
+```bash
+# Run Corvus container with read-only filesystem
+docker run --read-only \
+  -v /path/to/workspace:/workspace \
+  ghcr.io/dallay/corvus:latest gateway
+```
+
+### CIS Docker Benchmark Compliance
+
+| Control | Implementation |
+|---------|----------------|
+| **4.1 Non-root user** | Container runs as UID 65534 (distroless nonroot) |
+| **4.2 Minimal base image** | `gcr.io/distroless/cc-debian12:nonroot` — no shell, no package manager |
+| **5.25 Read-only filesystem** | Supported via `docker run --read-only` with `/workspace` volume |
+
+## Native Runtime Security
+
+The native runtime executes commands directly on the host system with security policy enforcement.
+
+### Configuration
+
+```toml
+[runtime]
+kind = "native"
+```
+
+### Security Features
+
+**Command Allowlisting**
+```toml
+[autonomy]
+allowed_commands = ["git", "npm", "cargo", "ls", "cat", "grep"]
+```
+
+Only whitelisted commands can execute.
+
+**Filesystem Scoping**
+```toml
+[autonomy]
+workspace_only = true
+forbidden_paths = ["/etc", "/root", "~/.ssh"]
+```
+
+All file operations confined to workspace.
+
+**Risk Classification**
+```toml
+[autonomy]
+require_approval_for_medium_risk = true
+block_high_risk_commands = true
+```
+
+Commands classified by risk level:
+- **Low**: `git status`, `ls`, `cat`
+- **Medium**: `git commit`, `npm install`, `touch`
+- **High**: `rm`, `curl`, `sudo`, `wget`
+
+### Command Injection Protection
+
+The native runtime blocks:
+- Backticks: `` `whoami` ``
+- Subshells: `$(cat /etc/passwd)`
+- Variable expansion: `${IFS}cat`
+- Process substitution: `<(echo pwned)`
+- Output redirection: `> /etc/crontab`
+- Single ampersand chaining: `cmd & malicious`
+- Dangerous arguments: `find -exec`, `git config`
+
+## Landlock Sandboxing (Linux)
+
+Corvus supports **Landlock** (Linux kernel 5.13+) for unprivileged filesystem sandboxing.
+
+<Note>
+Landlock is a Linux Security Module (LSM) that provides kernel-level filesystem access control without requiring root privileges.
+</Note>
+
+### How Landlock Works
+
+Landlock restricts filesystem access at the kernel level:
+
+1. **Ruleset Creation** — Define allowed filesystem operations
+2. **Path Rules** — Allow specific directories (workspace, /tmp, /usr, /bin)
+3. **Restriction** — Apply ruleset to current process
+4. **Inheritance** — Child processes inherit restrictions
+
+### Allowed Operations
+
+**Workspace Directory** (read/write):
+- Read files
+- Write files
+- List directories
+
+**System Directories** (read-only):
+- `/usr` and `/bin` — Execute commands
+- `/tmp` — Temporary operations
+
+**Blocked by Default**:
+- `/etc`, `/root`, `/proc`, `/sys`
+- Home directory (except workspace)
+- All other filesystem paths
+
+### Availability
+
+Landlock requires:
+- Linux kernel 5.13+
+- `sandbox-landlock` feature enabled
+- Kernel configured with `CONFIG_SECURITY_LANDLOCK=y`
+
+```bash
+# Check if Landlock is available
+uname -r  # kernel version
+zcat /proc/config.gz | grep LANDLOCK
+```
+
+### Enable Landlock
+
+```bash
+# Build with Landlock support
+cargo build --release --features sandbox-landlock
+```
+
+Corvus automatically detects Landlock availability at runtime and falls back to policy-based sandboxing if unavailable.
+
+## Resource Limits
+
+### Memory Limits
+
+**Docker Runtime:**
+```toml
+[runtime.docker]
+memory_limit_mb = 512
+```
+
+**Native Runtime:**
+```toml
+[autonomy]
+max_actions_per_hour = 20  # rate limiting
+```
+
+### CPU Limits
+
+**Docker Runtime:**
+```toml
+[runtime.docker]
+cpu_limit = 1.0  # 1 CPU core
+```
+
+### Rate Limiting
+
+**Both Runtimes:**
+```toml
+[autonomy]
+max_actions_per_hour = 20
+max_cost_per_day_cents = 500
+```
+
+Slidding window action tracking prevents runaway automation.
+
+## Choosing a Runtime
+
+| Feature | Native | Docker |
+|---------|--------|--------|
+| **Isolation** | Policy-based | Container-based |
+| **Performance** | Fast | Moderate overhead |
+| **Network Isolation** | No | Yes (`network=none`) |
+| **Filesystem Isolation** | Workspace + policy | Container + mount |
+| **Resource Limits** | Rate limiting | Memory/CPU caps |
+| **Setup** | Zero config | Requires Docker |
+| **Linux Sandboxing** | Landlock (optional) | Not applicable |
+
+### Recommendations
+
+**Production:**
+- Use `runtime.kind = "docker"` with `network = "none"` and `read_only_rootfs = true`
+- Enable resource limits
+- Use workspace mount validation
+
+**Development:**
+- Use `runtime.kind = "native"` for faster iteration
+- Enable `workspace_only = true`
+- Use default command allowlists
+
+**Edge/IoT:**
+- Use `runtime.kind = "native"`
+- Enable Landlock if available
+- Minimal resource footprint
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Security Overview" icon="shield" href="/guides/security/overview">
+    Security architecture and threat model
+  </Card>
+  <Card title="Gateway Security" icon="lock" href="/guides/security/gateway">
+    Network security and authentication
+  </Card>
+</CardGroup>

@@ -1,0 +1,275 @@
+---
+title: 'Custom Memory Backend'
+description: 'Build a custom memory storage backend'
+---
+
+# Custom Memory Backend
+
+Build a custom memory backend to integrate any storage system with Corvus.
+
+## Overview
+
+Memory backends implement the `Memory` trait from `src/memory/traits.rs`. The core methods are `store()` and `recall()`.
+
+## Step 1: Create the Backend
+
+Create `src/memory/my_backend.rs`:
+
+```rust
+use crate::memory::traits::{Memory, MemoryCategory, MemoryEntry};
+use anyhow::Result;
+use async_trait::async_trait;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+use std::sync::Arc;
+
+pub struct MyMemoryBackend {
+    data: Arc<RwLock<HashMap<String, MemoryEntry>>>,
+}
+
+impl MyMemoryBackend {
+    pub fn new() -> Self {
+        Self {
+            data: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl Memory for MyMemoryBackend {
+    fn name(&self) -> &str {
+        "my_backend"
+    }
+    
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+    ) -> Result<()> {
+        let mut data = self.data.write().await;
+        
+        let entry = MemoryEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            key: key.to_string(),
+            content: content.to_string(),
+            category,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            session_id: session_id.map(|s| s.to_string()),
+            score: None,
+        };
+        
+        data.insert(key.to_string(), entry);
+        Ok(())
+    }
+    
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        session_id: Option<&str>,
+    ) -> Result<Vec<MemoryEntry>> {
+        let data = self.data.read().await;
+        
+        let mut results: Vec<_> = data.values()
+            .filter(|e| {
+                // Filter by session
+                if let Some(sid) = session_id {
+                    e.session_id.as_deref() == Some(sid)
+                } else {
+                    true
+                }
+            })
+            .filter(|e| {
+                // Simple keyword matching
+                e.content.to_lowercase().contains(&query.to_lowercase())
+                    || e.key.to_lowercase().contains(&query.to_lowercase())
+            })
+            .cloned()
+            .collect();
+        
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        results.truncate(limit);
+        
+        Ok(results)
+    }
+    
+    async fn get(&self, key: &str) -> Result<Option<MemoryEntry>> {
+        let data = self.data.read().await;
+        Ok(data.get(key).cloned())
+    }
+    
+    async fn list(
+        &self,
+        category: Option<&MemoryCategory>,
+        session_id: Option<&str>,
+    ) -> Result<Vec<MemoryEntry>> {
+        let data = self.data.read().await;
+        
+        let results = data.values()
+            .filter(|e| {
+                let cat_match = category.map_or(true, |c| &e.category == c);
+                let sess_match = session_id.map_or(true, |s| e.session_id.as_deref() == Some(s));
+                cat_match && sess_match
+            })
+            .cloned()
+            .collect();
+        
+        Ok(results)
+    }
+    
+    async fn forget(&self, key: &str) -> Result<bool> {
+        let mut data = self.data.write().await;
+        Ok(data.remove(key).is_some())
+    }
+    
+    async fn count(&self) -> Result<usize> {
+        let data = self.data.read().await;
+        Ok(data.len())
+    }
+    
+    async fn health_check(&self) -> bool {
+        true
+    }
+}
+```
+
+## Step 2: Register the Backend
+
+Add to `src/memory/mod.rs`:
+
+```rust
+pub mod my_backend;
+
+pub fn create_memory_backend(
+    backend: &str,
+    workspace_dir: &Path,
+    config: &MemoryConfig,
+) -> Result<Arc<dyn Memory>> {
+    match backend {
+        "my_backend" => Ok(Arc::new(my_backend::MyMemoryBackend::new())),
+        "sqlite" => Ok(Arc::new(sqlite::SqliteMemory::new(workspace_dir)?)),
+        // ... existing backends
+        _ => Err(anyhow::anyhow!("Unknown memory backend: {}", backend)),
+    }
+}
+```
+
+## Step 3: Configure
+
+Update `~/.corvus/config.toml`:
+
+```toml
+[memory]
+backend = "my_backend"
+auto_save = true
+```
+
+## Step 4: Test
+
+Add tests in `src/memory/my_backend.rs`:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_store_and_recall() {
+        let backend = MyMemoryBackend::new();
+        
+        backend.store(
+            "test_key",
+            "test content",
+            MemoryCategory::Core,
+            None,
+        ).await.unwrap();
+        
+        let results = backend.recall("test", 10, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "test_key");
+    }
+}
+```
+
+Run tests:
+
+```bash
+cargo test memory::my_backend
+```
+
+## Advanced Features
+
+### Vector Search
+
+Integrate with embedding provider:
+
+```rust
+use crate::memory::embeddings::EmbeddingProvider;
+
+pub struct MyMemoryBackend {
+    embedder: Arc<dyn EmbeddingProvider>,
+    // ...
+}
+
+impl MyMemoryBackend {
+    pub fn new(embedder: Arc<dyn EmbeddingProvider>) -> Self {
+        Self { embedder, /* ... */ }
+    }
+}
+
+#[async_trait]
+impl Memory for MyMemoryBackend {
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        session_id: Option<&str>,
+    ) -> Result<Vec<MemoryEntry>> {
+        // 1. Embed query
+        let query_embedding = self.embedder.embed(query).await?;
+        
+        // 2. Vector search (cosine similarity)
+        // 3. Merge with keyword search
+        // 4. Return top results
+    }
+}
+```
+
+### Persistence
+
+For persistent storage:
+
+```rust
+use std::path::Path;
+
+impl MyMemoryBackend {
+    pub fn with_file(path: &Path) -> Result<Self> {
+        // Load from file
+        let data = std::fs::read_to_string(path)?;
+        let entries: HashMap<String, MemoryEntry> = serde_json::from_str(&data)?;
+        
+        Ok(Self {
+            data: Arc::new(RwLock::new(entries)),
+        })
+    }
+    
+    pub async fn save_to_file(&self, path: &Path) -> Result<()> {
+        let data = self.data.read().await;
+        let json = serde_json::to_string_pretty(&*data)?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+}
+```
+
+## Full Example
+
+See `examples/custom_memory.rs` for a complete implementation.
+
+## Related
+
+- [Memory Trait](/api/traits/memory)
+- [Memory Overview](/guides/memory/overview)
+- [SQLite Backend](/guides/memory/sqlite)

@@ -1,0 +1,537 @@
+---
+title: Deployment
+description: Deploy Corvus to production with native binary, Docker, or systemd service
+---
+
+## Deployment Options
+
+Corvus can be deployed in multiple ways depending on your infrastructure:
+
+- **Native Binary** — Single ~3.4MB executable
+- **Docker Container** — Distroless container image
+- **systemd Service** — Background daemon with auto-restart
+- **Kubernetes** — Pod deployment with ConfigMap
+
+## Native Binary Deployment
+
+### Installation
+
+**Via npm/pnpm/yarn:**
+```bash
+npm install -g @dallay/corvus
+pnpm add -g @dallay/corvus
+yarn global add @dallay/corvus
+bun add -g @dallay/corvus
+```
+
+**Build from source:**
+```bash
+git clone https://github.com/dallay/corvus.git
+cd corvus
+cargo build --release
+cargo install --path . --force
+```
+
+**Direct binary download:**
+```bash
+# Linux x86_64
+curl -L https://github.com/dallay/corvus/releases/latest/download/corvus-linux-x86_64 -o corvus
+chmod +x corvus
+sudo mv corvus /usr/local/bin/
+
+# Linux ARM64
+curl -L https://github.com/dallay/corvus/releases/latest/download/corvus-linux-aarch64 -o corvus
+chmod +x corvus
+sudo mv corvus /usr/local/bin/
+```
+
+### Initial Setup
+
+```bash
+# Quick setup (no prompts)
+corvus onboard --api-key sk-... --provider openrouter
+
+# Interactive wizard
+corvus onboard --interactive
+
+# Repair channels only
+corvus onboard --channels-only
+```
+
+### Running the Daemon
+
+```bash
+# Start the daemon (foreground)
+corvus daemon
+
+# Start with specific config
+corvus daemon --config /path/to/config.toml
+
+# Start gateway only
+corvus gateway
+corvus gateway --port 8080
+```
+
+### Environment Variables
+
+```bash
+# Disable update checks
+export CORVUS_DISABLE_UPDATE_CHECK=1
+
+# SurrealDB configuration (env-first)
+export CORVUS_MEMORY_BACKEND=surreal
+export CORVUS_SURREALDB_URL=http://127.0.0.1:8000
+export CORVUS_SURREALDB_NAMESPACE=corvus
+export CORVUS_SURREALDB_DATABASE=memory
+export CORVUS_SURREALDB_USERNAME=corvus
+export CORVUS_SURREALDB_PASSWORD=your-password
+```
+
+## Docker Deployment
+
+### Docker Compose
+
+**`docker-compose.yml`:**
+```yaml
+version: '3.8'
+
+services:
+  corvus:
+    image: ghcr.io/dallay/corvus:latest
+    container_name: corvus-agent
+    restart: unless-stopped
+    read_only: true
+    
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/root/.corvus:ro
+    
+    ports:
+      - "127.0.0.1:8080:8080"
+    
+    environment:
+      - CORVUS_DISABLE_UPDATE_CHECK=1
+    
+    command: daemon
+    
+    # Optional: resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+```
+
+**Start:**
+```bash
+docker-compose up -d
+docker-compose logs -f corvus
+```
+
+### Standalone Docker
+
+```bash
+# Create workspace directory
+mkdir -p ~/corvus-workspace
+
+# Run daemon
+docker run -d \
+  --name corvus-agent \
+  --restart unless-stopped \
+  --read-only \
+  -v ~/corvus-workspace:/workspace \
+  -v ~/.corvus:/root/.corvus:ro \
+  -p 127.0.0.1:8080:8080 \
+  ghcr.io/dallay/corvus:latest daemon
+
+# View logs
+docker logs -f corvus-agent
+
+# Stop
+docker stop corvus-agent
+```
+
+### Docker with Gateway Only
+
+```bash
+docker run -d \
+  --name corvus-gateway \
+  --restart unless-stopped \
+  -v ~/.corvus:/root/.corvus:ro \
+  -p 127.0.0.1:8080:8080 \
+  ghcr.io/dallay/corvus:latest gateway --port 8080
+```
+
+### Security Hardening
+
+**Read-only filesystem:**
+```bash
+docker run --read-only \
+  -v /workspace:/workspace \
+  ghcr.io/dallay/corvus:latest daemon
+```
+
+**Non-root user:**
+- Corvus images run as UID 65534 (nobody)
+- No shell or package manager in distroless image
+
+**Network isolation:**
+```bash
+docker run --network none \
+  ghcr.io/dallay/corvus:latest daemon
+```
+
+## systemd Service Management
+
+Corvus includes built-in systemd service management for running as a background daemon.
+
+### Service Commands
+
+**Install service:**
+```bash
+# Install as user service (recommended)
+corvus service install
+
+# Install with linger (keeps running after logout/reboot)
+corvus service install --linger on
+```
+
+**Start service:**
+```bash
+corvus service start
+```
+
+**Check status:**
+```bash
+corvus service status
+```
+
+**Restart service:**
+```bash
+# Useful after binary updates
+corvus service restart
+```
+
+**Stop service:**
+```bash
+corvus service stop
+```
+
+**Uninstall service:**
+```bash
+corvus service uninstall
+```
+
+### Service Configuration
+
+The service uses your `~/.corvus/config.toml` by default.
+
+**Service file location:**
+- `~/.config/systemd/user/corvus.service` (user service)
+- `/etc/systemd/system/corvus.service` (system service)
+
+**View service logs:**
+```bash
+journalctl --user -u corvus -f
+```
+
+**Enable on boot:**
+```bash
+systemctl --user enable corvus
+
+# Or during install:
+corvus service install --linger on
+```
+
+### Linger Mode
+
+Linger keeps the service running after logout and across reboots:
+
+```bash
+# Enable linger during install
+corvus service install --linger on
+
+# Manually enable linger
+loginctl enable-linger $USER
+
+# Check linger status
+loginctl show-user $USER | grep Linger
+```
+
+### Updating the Binary
+
+When updating Corvus:
+
+```bash
+# 1. Update the binary
+cargo install --path . --force
+# or
+npm update -g @dallay/corvus
+
+# 2. Restart the service
+corvus service restart
+```
+
+## Production Considerations
+
+### Configuration Management
+
+**Store config in version control:**
+```bash
+# Export config template (remove secrets)
+corvus config export --redact > config.template.toml
+
+# Deploy with secrets from env
+export CORVUS_API_KEY=sk-...
+corvus daemon --config config.toml
+```
+
+**Use environment variables for secrets:**
+```bash
+# API keys
+export CORVUS_API_KEY=sk-...
+
+# Database credentials
+export CORVUS_SURREALDB_PASSWORD=...
+
+# Telegram tokens
+export CORVUS_TELEGRAM_BOT_TOKEN=...
+```
+
+### Workspace Management
+
+**Recommended structure:**
+```
+/opt/corvus/
+├── config.toml
+├── workspace/
+│   ├── IDENTITY.md
+│   ├── USER.md
+│   ├── SOUL.md
+│   └── projects/
+└── logs/
+```
+
+**Permissions:**
+```bash
+chown -R corvus:corvus /opt/corvus
+chmod 700 /opt/corvus/config.toml
+chmod 755 /opt/corvus/workspace
+```
+
+### Monitoring and Health Checks
+
+**System diagnostics:**
+```bash
+# Check system health
+corvus doctor
+
+# Check channel health
+corvus channel doctor
+
+# Check status
+corvus status
+```
+
+**Health endpoint:**
+```bash
+curl http://127.0.0.1:8080/health
+# {"status": "ok", "uptime_seconds": 3600}
+```
+
+**Monitor with systemd:**
+```bash
+# Watch service status
+watch -n 5 'systemctl --user status corvus'
+
+# View logs in real-time
+journalctl --user -u corvus -f
+```
+
+### Resource Monitoring
+
+**Check memory usage:**
+```bash
+# Docker
+docker stats corvus-agent
+
+# Native
+ps aux | grep corvus
+top -p $(pgrep corvus)
+```
+
+**Expected resource usage:**
+- Memory: < 5MB base + working set
+- CPU: Idle < 1%, active < 50%
+- Disk: ~3.4MB binary + workspace
+
+### Logging Configuration
+
+**Set log level:**
+```bash
+# Environment variable
+export RUST_LOG=info  # trace, debug, info, warn, error
+
+# In config.toml
+[observability]
+backend = "log"
+```
+
+**Structured logging:**
+```toml
+[observability]
+backend = "otel"
+otel_endpoint = "http://localhost:4318"
+otel_service_name = "corvus-agent"
+```
+
+### Backup and Recovery
+
+**Backup items:**
+```bash
+# Configuration
+cp ~/.corvus/config.toml ~/backup/
+
+# Memory database
+cp ~/.corvus/memory.db ~/backup/
+
+# Workspace
+tar -czf ~/backup/workspace.tar.gz /opt/corvus/workspace/
+```
+
+**Restore:**
+```bash
+# Stop service
+corvus service stop
+
+# Restore files
+cp ~/backup/config.toml ~/.corvus/
+cp ~/backup/memory.db ~/.corvus/
+
+# Start service
+corvus service start
+```
+
+### Network Security
+
+**Use a tunnel for external access:**
+```bash
+# Tailscale (recommended)
+tailscale funnel --bg 8080
+corvus gateway --port 8080
+
+# Cloudflare Tunnel
+cloudflared tunnel --url http://127.0.0.1:8080 run corvus
+```
+
+**Firewall rules:**
+```bash
+# Allow only localhost
+ufw deny 8080
+ufw allow from 127.0.0.1 to any port 8080
+
+# Or block all external access
+iptables -A INPUT -p tcp --dport 8080 ! -s 127.0.0.1 -j DROP
+```
+
+### High Availability
+
+**Multiple instances:**
+```bash
+# Instance 1
+corvus daemon --config /opt/corvus/config1.toml
+
+# Instance 2 (different port)
+corvus gateway --port 8081 --config /opt/corvus/config2.toml
+```
+
+**Load balancing:**
+```nginx
+upstream corvus {
+    server 127.0.0.1:8080;
+    server 127.0.0.1:8081;
+}
+
+server {
+    listen 443 ssl;
+    server_name corvus.example.com;
+    
+    location / {
+        proxy_pass http://corvus;
+    }
+}
+```
+
+## Performance Tuning
+
+### Memory Backend
+
+**SQLite (default):**
+```toml
+[memory]
+backend = "sqlite"  # fast, local
+```
+
+**SurrealDB (distributed):**
+```toml
+[memory]
+backend = "surreal"
+
+[memory.surreal]
+url = "http://127.0.0.1:8000"
+namespace = "corvus"
+database = "memory"
+```
+
+### Rate Limiting
+
+```toml
+[autonomy]
+max_actions_per_hour = 100  # increase for high-volume
+max_cost_per_day_cents = 1000
+```
+
+### Runtime Selection
+
+```toml
+# Native: fastest
+[runtime]
+kind = "native"
+
+# Docker: most isolated
+[runtime]
+kind = "docker"
+[runtime.docker]
+memory_limit_mb = 512
+cpu_limit = 1.0
+```
+
+## Troubleshooting
+
+See the [Troubleshooting Guide](/guides/troubleshooting) for common issues and solutions.
+
+**Quick diagnostics:**
+```bash
+# System health
+corvus doctor
+
+# Channel health
+corvus channel doctor
+
+# Service status
+corvus service status
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Security" icon="shield" href="/guides/security/overview">
+    Security best practices for production
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/guides/observability">
+    Monitoring and metrics
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/guides/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

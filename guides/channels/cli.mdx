@@ -1,0 +1,477 @@
+---
+title: CLI Channel
+description: Use Corvus agent via command-line interface
+---
+
+The CLI channel is the simplest way to interact with your Corvus agent. It uses standard input/output (stdin/stdout) and requires zero configuration or external services.
+
+## Features
+
+- Zero dependencies (no API tokens, no network)
+- Interactive REPL-style conversation
+- Single-message mode for scripting
+- Always available (no setup required)
+- Exit commands (`/quit`, `/exit`)
+- Direct terminal output
+
+## CLI Agent Command Usage
+
+Corvus provides two primary modes for CLI interaction:
+
+### Interactive Mode
+
+Start an interactive conversation session:
+
+```bash
+corvus agent
+```
+
+Example session:
+
+```
+🤖 Corvus Agent (interactive mode)
+
+Type your message and press Enter. Type /quit or /exit to end the session.
+
+> What files are in the current directory?
+  ⏳ Processing message...
+  🤖 Reply (234ms): Here are the files in the current directory:
+
+- Cargo.toml
+- src/
+- README.md
+- .gitignore
+
+> How many Rust files are there?
+  ⏳ Processing message...
+  🤖 Reply (189ms): There are 42 Rust files (.rs) in this project.
+
+> /quit
+Goodbye!
+```
+
+**Features:**
+- Multi-turn conversation with context
+- Typing indicators
+- Response timing
+- Exit commands
+
+### Single Message Mode
+
+Send a single message and get a response:
+
+```bash
+corvus agent -m "What is the weather in London?"
+```
+
+Or using the long form:
+
+```bash
+corvus agent --message "Summarize the README.md file"
+```
+
+**Output:**
+
+```
+  ⏳ Processing message...
+  🤖 Reply (567ms): The README describes a multi-platform agent framework...
+```
+
+**Use cases:**
+- Scripting and automation
+- CI/CD pipelines
+- One-off queries
+- Batch processing
+
+### File Input Mode
+
+Read message from a file:
+
+```bash
+corvus agent -m "$(cat prompt.txt)"
+```
+
+Or via stdin:
+
+```bash
+echo "Analyze this code" | corvus agent
+```
+
+## Command-Line Options
+
+```bash
+corvus agent [OPTIONS]
+```
+
+### Options
+
+| Flag | Long Form | Argument | Description |
+|------|-----------|----------|-------------|
+| `-m` | `--message` | `<TEXT>` | Send single message and exit |
+| `-h` | `--help` | - | Display help information |
+
+### Examples
+
+**Interactive conversation:**
+
+```bash
+corvus agent
+```
+
+**Single query:**
+
+```bash
+corvus agent -m "List all TODO comments in the codebase"
+```
+
+**Piped input:**
+
+```bash
+cat error.log | corvus agent -m "Explain this error"
+```
+
+**Multi-line message:**
+
+```bash
+corvus agent -m "Summarize these changes:
+
+$(git diff)"
+```
+
+## Interactive Mode Features
+
+### Exit Commands
+
+End the session with:
+
+```
+/quit
+```
+
+or
+
+```
+/exit
+```
+
+### Empty Lines
+
+Empty lines are ignored - press Enter again to continue:
+
+```
+> 
+>
+> What is the current directory?
+```
+
+### Multi-line Input
+
+Currently, messages are sent on Enter. For multi-line input, use escape sequences:
+
+```
+> First line\nSecond line\nThird line
+```
+
+Or use single message mode with a heredoc:
+
+```bash
+corvus agent -m "$(cat <<'EOF'
+First line
+Second line
+Third line
+EOF
+)"
+```
+
+## Output Formatting
+
+### Standard Output
+
+All agent responses are written to stdout:
+
+```
+🤖 Reply (123ms): Response text here
+```
+
+Format:
+- 🤖 emoji prefix
+- `Reply` label
+- Response time in milliseconds
+- Actual response text
+
+### Progress Indicators
+
+While processing:
+
+```
+⏳ Processing message...
+```
+
+### Error Output
+
+Errors are written to stderr:
+
+```
+❌ Error: Failed to connect to provider
+```
+
+### Session Start/End
+
+Interactive mode shows:
+
+```
+🤖 Corvus Agent (interactive mode)
+
+Type your message and press Enter. Type /quit or /exit to end the session.
+```
+
+On exit:
+
+```
+Goodbye!
+```
+
+## Configuration
+
+The CLI channel requires no channel-specific configuration. It uses the agent's global settings from `~/.corvus/config.toml`:
+
+```toml
+[agent]
+model = "claude-3-5-sonnet-20241022"
+temperature = 0.7
+max_tool_iterations = 10
+
+[provider]
+anthropic_api_key = "sk-ant-..."
+```
+
+See [Agent Configuration](/configuration/agent) for full details.
+
+## Technical Details
+
+### Implementation
+
+The CLI channel is defined in `clients/agent-runtime/src/channels/cli.rs`:
+
+```rust
+pub struct CliChannel;
+
+impl Channel for CliChannel {
+    fn name(&self) -> &str {
+        "cli"
+    }
+
+    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
+        println!("{}", message.content);
+        Ok(())
+    }
+
+    async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
+        let stdin = io::stdin();
+        let reader = BufReader::new(stdin);
+        let mut lines = reader.lines();
+
+        while let Ok(Some(line)) = lines.next_line().await {
+            let line = line.trim().to_string();
+            if line.is_empty() {
+                continue;
+            }
+            if line == "/quit" || line == "/exit" {
+                break;
+            }
+
+            let msg = ChannelMessage {
+                id: Uuid::new_v4().to_string(),
+                sender: "user".to_string(),
+                reply_target: "user".to_string(),
+                content: line,
+                channel: "cli".to_string(),
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            };
+
+            if tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+```
+
+**Key points:**
+- `send()` writes to stdout via `println!`
+- `listen()` reads from stdin line-by-line
+- Exit commands break the listen loop
+- Empty lines are filtered out
+- Messages use UUID for unique IDs
+- Sender and recipient are both `"user"`
+
+### Message Flow
+
+1. User types message and presses Enter
+2. CLI channel creates `ChannelMessage`:
+   ```rust
+   ChannelMessage {
+       id: "uuid-v4",
+       sender: "user",
+       reply_target: "user",
+       content: "user input",
+       channel: "cli",
+       timestamp: 1234567890,
+   }
+   ```
+3. Message is sent to agent orchestration loop
+4. Agent processes with LLM + tools
+5. Response is sent back via `send()`
+6. `println!` writes response to terminal
+
+### No Streaming Support
+
+The CLI channel does not support draft updates (`supports_draft_updates()` returns `false`).
+
+Responses are printed as complete messages after processing.
+
+## Scripting Examples
+
+### Batch File Processing
+
+Process multiple files:
+
+```bash
+for file in src/*.rs; do
+    echo "Analyzing $file..."
+    corvus agent -m "Summarize this Rust file: $(cat $file)"
+done
+```
+
+### CI/CD Integration
+
+Generate PR descriptions:
+
+```bash
+#!/bin/bash
+
+DIFF=$(git diff main...HEAD)
+DESCRIPTION=$(corvus agent -m "Generate a PR description for these changes:\n\n$DIFF")
+
+gh pr create --title "$TITLE" --body "$DESCRIPTION"
+```
+
+### Log Analysis
+
+Analyze error logs:
+
+```bash
+ERRORS=$(grep ERROR app.log | tail -20)
+corvus agent -m "Analyze these errors and suggest fixes:\n\n$ERRORS"
+```
+
+### JSON Output Parsing
+
+Extract structured data:
+
+```bash
+RESPONSE=$(corvus agent -m "List all functions in src/main.rs as JSON array")
+echo "$RESPONSE" | jq '.'
+```
+
+## Comparison with Other Channels
+
+| Feature | CLI | Telegram | Discord | WhatsApp |
+|---------|-----|----------|---------|----------|
+| **Setup** | None | BotFather | Discord App | Meta Business App |
+| **Network** | No | Yes | Yes | Yes |
+| **Streaming** | No | Yes | Partial | No |
+| **Allowlist** | N/A | Username/ID | User ID | Phone Number |
+| **Interactive** | Yes | Yes | Yes | Yes |
+| **Single Message** | Yes | No | No | No |
+| **Scripting** | Yes | No | No | No |
+
+## Troubleshooting
+
+### Interactive Mode Not Starting
+
+**Symptom:** Command hangs without prompt.
+
+**Cause:** Agent configuration issue (missing API key, invalid model).
+
+**Solution:** Verify configuration:
+
+```bash
+corvus config show
+```
+
+Check API key:
+
+```bash
+grep api_key ~/.corvus/config.toml
+```
+
+### No Response to Message
+
+**Symptom:** Message sent, but no reply.
+
+**Cause:** Provider API error.
+
+**Solution:** Check logs for errors:
+
+```bash
+corvus agent -m "test" 2>&1 | grep ERROR
+```
+
+Test provider connectivity:
+
+```bash
+corvus provider test
+```
+
+### Exit Commands Not Working
+
+**Symptom:** `/quit` or `/exit` treated as regular messages.
+
+**Cause:** CLI channel should catch these commands in `listen()`.
+
+**Solution:** This is a bug - please report at [GitHub Issues](https://github.com/dallay/corvus/issues).
+
+**Workaround:** Press `Ctrl+C` to force exit.
+
+### Piped Input Not Working
+
+**Symptom:** `echo "message" | corvus agent` hangs.
+
+**Cause:** Interactive mode waits for stdin close.
+
+**Solution:** Use single message mode instead:
+
+```bash
+corvus agent -m "$(echo 'message')"
+```
+
+## Best Practices
+
+1. **Use `-m` for Automation**: Single message mode is more reliable for scripts
+2. **Quote Complex Messages**: Always quote messages with spaces or special characters
+3. **Check Exit Codes**: Corvus returns non-zero on errors for scripting
+4. **Limit Context**: CLI messages are stateless - include all necessary context
+5. **Capture Output**: Redirect stdout to files for processing:
+   ```bash
+   corvus agent -m "query" > response.txt
+   ```
+
+## Future Enhancements
+
+- **Multi-line input editor**: Press `Ctrl+D` to submit multi-line messages
+- **History navigation**: Arrow keys to recall previous messages
+- **Syntax highlighting**: Colorized code blocks in responses
+- **Streaming output**: Progressive token-by-token display
+- **JSON mode**: Structured output format for scripting
+
+## Reference
+
+- Source: `clients/agent-runtime/src/channels/cli.rs`
+- Channel trait: `clients/agent-runtime/src/channels/traits.rs`
+- Agent commands: `clients/agent-runtime/src/main.rs`
+- Line range: `cli.rs:1-134`

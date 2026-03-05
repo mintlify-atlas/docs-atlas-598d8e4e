@@ -1,0 +1,225 @@
+---
+title: 'File Operations'
+description: 'Read and write files with path validation and sandboxing'
+---
+
+# File Operations
+
+Corvus provides two file operation tools with strict security enforcement:
+
+- `file_read` — Read file contents
+- `file_write` — Write or create files
+
+Both tools enforce workspace-only access by default and validate all paths to prevent traversal attacks.
+
+## file_read
+
+### Parameters
+
+<ParamField path="path" type="string" required>
+  Relative path to the file within the workspace
+</ParamField>
+
+### Security
+
+**Path Validation** (from `src/tools/file_read.rs:58-64`):
+
+```rust
+if !self.security.is_path_allowed(path) {
+    return Ok(ToolResult {
+        success: false,
+        error: Some(format!("Path not allowed: {path}")),
+        ..Default::default()
+    });
+}
+```
+
+**Symlink Protection**:
+
+Paths are canonicalized before access to block symlink escapes:
+
+```rust
+let resolved_path = tokio::fs::canonicalize(&full_path).await?;
+if !self.security.is_resolved_path_allowed(&resolved_path) {
+    return Err("Resolved path escapes workspace");
+}
+```
+
+**Size Limit**:
+
+Files larger than 10MB are rejected:
+
+```rust
+const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
+```
+
+### Example
+
+```json
+// Input
+{"path": "README.md"}
+
+// Output
+{
+  "success": true,
+  "output": "# Corvus\n\nFast AI agent runtime...\n",
+  "error": null
+}
+```
+
+## file_write
+
+### Parameters
+
+<ParamField path="path" type="string" required>
+  Relative path to the file within the workspace
+</ParamField>
+
+<ParamField path="content" type="string" required>
+  Content to write to the file
+</ParamField>
+
+<ParamField path="approved" type="boolean" default="false">
+  Explicit approval flag for overwriting existing files in supervised mode
+</ParamField>
+
+### Security
+
+**Workspace-Only Mode** (default):
+
+```toml
+[autonomy]
+workspace_only = true  # blocks all writes outside workspace
+```
+
+**Forbidden Paths**:
+
+System directories and sensitive dotfiles are blocked:
+
+```rust
+const FORBIDDEN_PATHS: &[&str] = &[
+    "/etc", "/root", "/proc", "/sys", "/boot",
+    "/.ssh", "/.gnupg", "/.aws", "/.env"
+];
+```
+
+**Null Byte Injection**:
+
+Null bytes in paths are rejected:
+
+```rust
+if path.contains('\0') {
+    return Err("Path contains null byte (path injection attempt)");
+}
+```
+
+**Approval for Overwrites**:
+
+In supervised mode, overwriting existing files requires approval:
+
+```json
+{
+  "path": "config.toml",
+  "content": "[updated config]",
+  "approved": true
+}
+```
+
+### Example
+
+```json
+// Input
+{
+  "path": "notes.txt",
+  "content": "Meeting notes from 2026-03-05"
+}
+
+// Output
+{
+  "success": true,
+  "output": "File written: notes.txt (29 bytes)",
+  "error": null
+}
+```
+
+## Autonomy Levels
+
+| Level | file_read | file_write |
+|-------|-----------|------------|
+| **ReadOnly** | ✅ Allowed | ❌ Blocked |
+| **Supervised** | ✅ Allowed | ✅ Allowed (approval for overwrites) |
+| **Full** | ✅ Allowed | ✅ Allowed |
+
+## Implementation Reference
+
+### file_read (src/tools/file_read.rs:20-137)
+
+```rust
+pub struct FileReadTool {
+    security: Arc<SecurityPolicy>,
+}
+
+impl FileReadTool {
+    pub fn new(security: Arc<SecurityPolicy>) -> Self {
+        Self { security }
+    }
+}
+
+#[async_trait]
+impl Tool for FileReadTool {
+    fn name(&self) -> &str { "file_read" }
+    
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let path = args["path"].as_str()?;
+        
+        // 1. Check allowlist
+        // 2. Record action (rate limit)
+        // 3. Canonicalize path
+        // 4. Validate resolved path
+        // 5. Check file size
+        // 6. Read and return
+    }
+}
+```
+
+## Path Validation Rules
+
+<Steps>
+  <Step title="Relative Path Check">
+    Absolute paths and `..` traversal are rejected
+  </Step>
+  <Step title="Canonicalization">
+    Path is resolved to its absolute canonical form
+  </Step>
+  <Step title="Workspace Boundary Check">
+    Resolved path must start with workspace directory
+  </Step>
+  <Step title="Forbidden Path Check">
+    System directories and sensitive files are blocked
+  </Step>
+</Steps>
+
+## Common Errors
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| "Path not allowed" | Path escapes workspace or uses `..` | Use relative paths only |
+| "File too large" | File exceeds 10MB limit | Split file or use streaming |
+| "Failed to resolve" | File doesn't exist or symlink is broken | Check path spelling |
+| "Rate limit exceeded" | Too many actions in last hour | Wait or increase `max_actions_per_hour` |
+
+## Best Practices
+
+<Tip>
+  Always use forward slashes (`/`) in paths, even on Windows. Corvus normalizes paths internally.
+</Tip>
+
+<Warning>
+  Never disable `workspace_only` mode in production. It's your primary defense against path traversal.
+</Warning>
+
+## Related
+
+- [Shell Tool](/guides/tools/shell)
+- [Security Policy](/guides/security/policy)
+- [Workspace Configuration](/guides/deployment#workspace-setup)

@@ -1,0 +1,214 @@
+---
+title: 'Browser Tool'
+description: 'Web automation with Brave browser and domain allowlisting'
+---
+
+# Browser Tool
+
+The `browser_open` tool enables the agent to open URLs in the Brave browser with strict domain allowlisting.
+
+<Warning>
+  This tool is **opt-in** and disabled by default for security.
+</Warning>
+
+## Configuration
+
+```toml
+[browser]
+enabled = true
+allowed_domains = ["docs.rs", "github.com", "stackoverflow.com"]
+```
+
+**Security requirement**: You must specify allowed domains. Empty list = tool disabled.
+
+## Parameters
+
+<ParamField path="url" type="string" required>
+  Full URL to open in the browser
+</ParamField>
+
+## Usage
+
+```json
+{
+  "name": "browser_open",
+  "arguments": {
+    "url": "https://docs.rs/tokio"
+  }
+}
+```
+
+**Result:**
+
+```json
+{
+  "success": true,
+  "output": "Opened URL in browser: https://docs.rs/tokio",
+  "error": null
+}
+```
+
+## Domain Validation
+
+From `src/tools/browser_open.rs`:
+
+```rust
+fn is_domain_allowed(url: &str, allowed: &[String]) -> bool {
+    let parsed = Url::parse(url)?;
+    let domain = parsed.domain()?;
+    
+    allowed.iter().any(|allowed_domain| {
+        domain == allowed_domain || 
+        domain.ends_with(&format!(".{}", allowed_domain))
+    })
+}
+```
+
+### Subdomain Matching
+
+Allowlisting `github.com` also allows:
+- `github.com`
+- `api.github.com`
+- `raw.githubusercontent.com`
+
+## Platform Support
+
+| Platform | Method | Binary |
+|----------|--------|--------|
+| **macOS** | `open` command | `/usr/bin/open` |
+| **Linux** | `brave-browser` or `xdg-open` | `/usr/bin/brave-browser` |
+| **Windows** | `start` command | `cmd.exe /c start` |
+
+## Common Use Cases
+
+### Documentation Lookup
+
+```json
+{"url": "https://docs.rs/tokio/latest/tokio/"}
+```
+
+### Issue Tracking
+
+```json
+{"url": "https://github.com/dallay/corvus/issues/42"}
+```
+
+### Stack Overflow Reference
+
+```json
+{"url": "https://stackoverflow.com/questions/12345678"}
+```
+
+## Error Handling
+
+### Blocked Domain
+
+```json
+// Input
+{"url": "https://malicious-site.com"}
+
+// Output
+{
+  "success": false,
+  "output": "",
+  "error": "Domain not in allowed list: malicious-site.com"
+}
+```
+
+### Invalid URL
+
+```json
+{
+  "success": false,
+  "output": "",
+  "error": "Invalid URL format"
+}
+```
+
+### Browser Not Found
+
+```json
+{
+  "success": false,
+  "output": "",
+  "error": "Brave browser not found. Install from https://brave.com"
+}
+```
+
+## Implementation Reference
+
+Source: `src/tools/browser_open.rs`
+
+```rust
+pub struct BrowserOpenTool {
+    allowed_domains: Vec<String>,
+}
+
+#[async_trait]
+impl Tool for BrowserOpenTool {
+    fn name(&self) -> &str { "browser_open" }
+    
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let url = args["url"].as_str()?;
+        
+        // Validate domain
+        if !is_domain_allowed(url, &self.allowed_domains) {
+            return Err("Domain not allowed");
+        }
+        
+        // Open in browser
+        #[cfg(target_os = "macos")]
+        Command::new("open").arg(url).spawn()?;
+        
+        #[cfg(target_os = "linux")]
+        Command::new("brave-browser").arg(url).spawn()?;
+        
+        Ok(ToolResult::success(format!("Opened: {url}")))
+    }
+}
+```
+
+## Security Considerations
+
+<Warning>
+  **Never allowlist**: Top-level domains (`*.com`), wildcard patterns (`*`), or untrusted sites.
+</Warning>
+
+<Tip>
+  Start with a minimal allowlist and add domains as needed. Each domain increases attack surface.
+</Tip>
+
+### Recommended Allowlist
+
+For development environments:
+
+```toml
+[browser]
+allowed_domains = [
+    "docs.rs",
+    "doc.rust-lang.org",
+    "github.com",
+    "stackoverflow.com",
+    "localhost",
+]
+```
+
+For production:
+
+```toml
+[browser]
+enabled = false  # disable unless required
+```
+
+## Alternatives
+
+If you need programmatic web access without opening a browser, use:
+
+- `http_request` tool (fetch and parse HTML/JSON)
+- `web_search_tool` (search engine integration)
+
+## Related
+
+- [Tool Overview](/guides/tools/overview)
+- [Security Policy](/guides/security/policy)
+- [HTTP Request Tool](/api/tools/http-request)

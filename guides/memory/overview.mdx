@@ -1,0 +1,270 @@
+---
+title: 'Memory System Overview'
+description: 'Full-stack hybrid search engine for long-term agent memory'
+---
+
+# Memory System Overview
+
+Corvus features a **full-stack search engine** for long-term memory, built entirely from scratch with zero external dependencies.
+
+## Architecture
+
+All memory backends implement the `Memory` trait from `src/memory/traits.rs:58-111`:
+
+```rust
+#[async_trait]
+pub trait Memory: Send + Sync {
+    fn name(&self) -> &str;
+    
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<()>;
+    
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>>;
+    
+    async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
+    async fn list(&self, category: Option<&MemoryCategory>, session_id: Option<&str>) -> anyhow::Result<Vec<MemoryEntry>>;
+    async fn forget(&self, key: &str) -> anyhow::Result<bool>;
+    async fn count(&self) -> anyhow::Result<usize>;
+    async fn health_check(&self) -> bool;
+}
+```
+
+## Hybrid Search Stack
+
+From README.md:
+
+| Layer | Implementation |
+|-------|----------------|
+| **Vector DB** | Embeddings stored as BLOB in SQLite, cosine similarity search |
+| **Keyword Search** | FTS5 virtual tables with BM25 scoring |
+| **Hybrid Merge** | Custom weighted merge function (`vector.rs`) |
+| **Embeddings** | `EmbeddingProvider` trait — OpenAI, custom URL, or noop |
+| **Chunking** | Line-based markdown chunker with heading preservation |
+| **Caching** | SQLite `embedding_cache` table with LRU eviction |
+| **Safe Reindex** | Rebuild FTS5 + re-embed missing vectors atomically |
+
+## Configuration
+
+```toml
+[memory]
+backend = "sqlite"              # "sqlite", "lucid", "surreal", "markdown", "none"
+auto_save = true
+embedding_provider = "openai"
+vector_weight = 0.7
+keyword_weight = 0.3
+```
+
+### Backend Comparison
+
+| Backend | Vector Search | Keyword Search | Graph Queries | Best For |
+|---------|---------------|----------------|---------------|----------|
+| **SQLite** | ✅ | ✅ (FTS5) | ❌ | Local, fast, battle-tested |
+| **SurrealDB** | ✅ | ✅ | ✅ | Graphs, relationships, multi-node |
+| **Markdown** | ❌ | ✅ (grep) | ❌ | Human-readable, git-friendly |
+| **None** | ❌ | ❌ | ❌ | Stateless agents |
+
+## Memory Entry Structure
+
+From `src/memory/traits.rs:5-14`:
+
+```rust
+pub struct MemoryEntry {
+    pub id: String,
+    pub key: String,
+    pub content: String,
+    pub category: MemoryCategory,
+    pub timestamp: String,
+    pub session_id: Option<String>,
+    pub score: Option<f64>,  // relevance score from search
+}
+```
+
+## Memory Categories
+
+```rust
+pub enum MemoryCategory {
+    Core,          // Long-term facts, preferences, decisions
+    Daily,         // Daily session logs
+    Conversation,  // Conversation context
+    Custom(String),// User-defined category
+}
+```
+
+### Usage Guidelines
+
+<CardGroup cols={2}>
+  <Card title="Core" icon="database">
+    User preferences, long-term facts, architecture decisions. Never auto-deleted.
+  </Card>
+  <Card title="Daily" icon="calendar">
+    Session logs, daily notes. Auto-pruned after 30 days.
+  </Card>
+  <Card title="Conversation" icon="message">
+    Current conversation context. Cleared per session.
+  </Card>
+  <Card title="Custom" icon="tag">
+    Project-specific: `project:webapp`, `bugs:critical`, etc.
+  </Card>
+</CardGroup>
+
+## Hybrid Search Algorithm
+
+From `src/memory/vector.rs`:
+
+```rust
+pub fn merge_search_results(
+    vector_results: Vec<(String, f32)>,
+    keyword_results: Vec<(String, f32)>,
+    vector_weight: f32,
+    keyword_weight: f32,
+    limit: usize,
+) -> Vec<(String, f64)> {
+    // Normalize scores to [0, 1]
+    // Weighted sum: score = (vector * w_v) + (keyword * w_k)
+    // Sort by final score descending
+    // Return top N
+}
+```
+
+**Default weights**: 70% vector, 30% keyword (configurable)
+
+## Embedding Cache
+
+To avoid redundant API calls, embeddings are cached:
+
+```sql
+CREATE TABLE embedding_cache (
+    content_hash TEXT PRIMARY KEY,
+    embedding    BLOB NOT NULL,
+    accessed_at  TEXT NOT NULL
+);
+```
+
+**LRU eviction**: Oldest accessed entries are pruned when cache exceeds `cache_max` (default: 10,000).
+
+## Performance Characteristics
+
+### SQLite Backend
+
+- **Store**: &lt;1ms (indexed write)
+- **Recall (vector)**: 10-50ms for 1000 entries
+- **Recall (keyword)**: &lt;5ms (FTS5 index)
+- **Hybrid merge**: 15-60ms total
+
+### SurrealDB Backend
+
+- **Store**: 1-5ms (local), 10-50ms (remote)
+- **Recall**: 5-20ms (native vector search)
+- **Graph queries**: 10-100ms depending on depth
+
+## SurrealDB Configuration
+
+```toml
+[memory.surreal]
+url = "http://127.0.0.1:8000"
+namespace = "corvus"
+database = "memory"
+allow_http_loopback = true
+```
+
+Environment overrides:
+
+```bash
+export CORVUS_MEMORY_BACKEND=surreal
+export CORVUS_SURREALDB_URL=http://127.0.0.1:8000
+export CORVUS_SURREALDB_NAMESPACE=corvus
+export CORVUS_SURREALDB_DATABASE=memory
+```
+
+## Migration from OpenClaw
+
+Corvus can import memory from OpenClaw:
+
+```bash
+corvus migrate openclaw --dry-run
+corvus migrate openclaw
+```
+
+See [Migration Guide](/guides/deployment#migration).
+
+## Best Practices
+
+<Tip>
+  Use **descriptive keys** with prefixes: `user_pref_theme`, `project_goal_2026_Q1`
+</Tip>
+
+<Tip>
+  Enable **auto_save** for production agents that need to learn over time
+</Tip>
+
+<Warning>
+  **Never store secrets** (API keys, passwords) in memory. Use config or secure storage.
+</Warning>
+
+## API Usage
+
+### Storing a Memory
+
+```rust
+memory.store(
+    "user_prefers_rust",
+    "User strongly prefers Rust for system programming",
+    MemoryCategory::Core,
+    None,  // no session scope
+).await?;
+```
+
+### Recalling Memories
+
+```rust
+let results = memory.recall(
+    "programming language preferences",
+    5,  // limit
+    None,  // all sessions
+).await?;
+
+for entry in results {
+    println!("{}: {} (score: {})", 
+        entry.key, 
+        entry.content, 
+        entry.score.unwrap_or(0.0)
+    );
+}
+```
+
+### Session-Scoped Recall
+
+```rust
+let results = memory.recall(
+    "current task status",
+    10,
+    Some("session-abc-123"),  // filter by session
+).await?;
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="SQLite Backend" icon="database" href="/guides/memory/sqlite">
+    Battle-tested local storage
+  </Card>
+  <Card title="SurrealDB Backend" icon="network-wired" href="/guides/memory/surrealdb">
+    Graph queries and multi-node
+  </Card>
+  <Card title="Embeddings" icon="brain" href="/guides/memory/embeddings">
+    Vector search configuration
+  </Card>
+  <Card title="Memory Tools" icon="wrench" href="/guides/tools/memory">
+    Agent memory operations
+  </Card>
+</CardGroup>

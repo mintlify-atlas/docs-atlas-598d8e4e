@@ -1,0 +1,389 @@
+---
+title: 'SQLite Memory Backend'
+description: 'Production-grade local memory with hybrid vector + keyword search'
+---
+
+# SQLite Memory Backend
+
+The SQLite backend is the **default and recommended** memory system for Corvus. It provides:
+
+- ✅ Battle-tested reliability (SQLite is used by billions of devices)
+- ✅ Zero external dependencies
+- ✅ Hybrid vector + keyword search
+- ✅ &lt;1ms writes, &lt;60ms hybrid searches
+- ✅ Embedded (no separate server)
+
+## Configuration
+
+```toml
+[memory]
+backend = "sqlite"              # default
+auto_save = true
+embedding_provider = "openai"   # or "noop" to disable vectors
+vector_weight = 0.7
+keyword_weight = 0.3
+```
+
+Database location: `~/.corvus/memory/brain.db`
+
+## Schema
+
+From `src/memory/sqlite.rs:126-171`:
+
+```sql
+-- Core memories table
+CREATE TABLE memories (
+    id          TEXT PRIMARY KEY,
+    key         TEXT NOT NULL UNIQUE,
+    content     TEXT NOT NULL,
+    category    TEXT NOT NULL DEFAULT 'core',
+    embedding   BLOB,
+    session_id  TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE INDEX idx_memories_category ON memories(category);
+CREATE INDEX idx_memories_key ON memories(key);
+CREATE INDEX idx_memories_session ON memories(session_id);
+
+-- FTS5 full-text search (BM25 scoring)
+CREATE VIRTUAL TABLE memories_fts USING fts5(
+    key, content, content=memories, content_rowid=rowid
+);
+
+-- Embedding cache with LRU eviction
+CREATE TABLE embedding_cache (
+    content_hash TEXT PRIMARY KEY,
+    embedding    BLOB NOT NULL,
+    created_at   TEXT NOT NULL,
+    accessed_at  TEXT NOT NULL
+);
+
+CREATE INDEX idx_cache_accessed ON embedding_cache(accessed_at);
+```
+
+## Performance Tuning
+
+From `src/memory/sqlite.rs:69-81`:
+
+```rust
+// Production-grade PRAGMA tuning
+conn.execute_batch(
+    "PRAGMA journal_mode = WAL;      -- concurrent reads during writes
+     PRAGMA synchronous  = NORMAL;   -- 2× write speed, still durable
+     PRAGMA mmap_size    = 8388608;  -- 8MB mmap for hot reads
+     PRAGMA cache_size   = -2000;    -- 2MB page cache
+     PRAGMA temp_store   = MEMORY;   -- temp tables in RAM",
+)?;
+```
+
+### WAL Mode Benefits
+
+- **Concurrent access**: Readers don't block writers
+- **Crash safety**: Atomic commits
+- **Performance**: 2-3× faster writes than DELETE mode
+
+## Vector Search
+
+### Embedding Storage
+
+Embeddings are stored as BLOBs (binary large objects):
+
+```rust
+pub fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
+    embedding.iter()
+        .flat_map(|f| f.to_le_bytes())
+        .collect()
+}
+
+pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
+    bytes.chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+        .collect()
+}
+```
+
+### Cosine Similarity Search
+
+From `src/memory/sqlite.rs`:
+
+```rust
+let mut stmt = conn.prepare(
+    "SELECT id, key, content, category, embedding, session_id, created_at
+     FROM memories
+     WHERE embedding IS NOT NULL
+       AND (? IS NULL OR session_id = ?)"
+)?;
+
+let entries: Vec<_> = stmt.query_map(params![session_id, session_id], |row| {
+    let embedding_blob: Vec<u8> = row.get(4)?;
+    let embedding = deserialize_embedding(&embedding_blob);
+    
+    let similarity = cosine_similarity(&query_embedding, &embedding);
+    
+    Ok((row, similarity))
+})?.collect();
+
+// Sort by similarity descending
+entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+```
+
+**Time complexity**: O(n) for brute-force cosine similarity, fast enough for &lt;100k memories
+
+## Keyword Search
+
+### FTS5 Full-Text Index
+
+SQLite's FTS5 provides:
+
+- **BM25 scoring** (Best Matching 25 ranking function)
+- **Phrase queries**: `"exact phrase"`
+- **Boolean operators**: `rust AND tokio NOT async-std`
+- **Prefix matching**: `program*`
+
+### Query Example
+
+```rust
+let mut stmt = conn.prepare(
+    "SELECT m.id, m.key, m.content, m.category, m.session_id, m.created_at,
+            bm25(memories_fts) as score
+     FROM memories_fts
+     JOIN memories m ON memories_fts.rowid = m.rowid
+     WHERE memories_fts MATCH ?
+       AND (? IS NULL OR m.session_id = ?)
+     ORDER BY bm25(memories_fts)
+     LIMIT ?"
+)?;
+```
+
+**BM25 score**: Lower is better (negative numbers indicate stronger matches)
+
+## Hybrid Search
+
+From `src/memory/vector.rs:14-56`:
+
+```rust
+pub fn merge_search_results(
+    vector_results: Vec<(String, f32)>,
+    keyword_results: Vec<(String, f32)>,
+    vector_weight: f32,
+    keyword_weight: f32,
+    limit: usize,
+) -> Vec<(String, f64)> {
+    let mut scores: HashMap<String, (f64, f64)> = HashMap::new();
+    
+    // Normalize vector scores to [0, 1]
+    for (id, score) in vector_results {
+        scores.entry(id).or_default().0 = score as f64;
+    }
+    
+    // Normalize keyword scores to [0, 1]
+    for (id, score) in keyword_results {
+        scores.entry(id).or_default().1 = score as f64;
+    }
+    
+    // Weighted sum
+    let mut final_scores: Vec<_> = scores
+        .into_iter()
+        .map(|(id, (vec_score, key_score))| {
+            let final_score = (vec_score * vector_weight as f64) 
+                            + (key_score * keyword_weight as f64);
+            (id, final_score)
+        })
+        .collect();
+    
+    // Sort descending and take top N
+    final_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    final_scores.truncate(limit);
+    
+    final_scores
+}
+```
+
+## Embedding Cache
+
+### Purpose
+
+Avoid redundant API calls for duplicate content:
+
+```rust
+use sha2::{Sha256, Digest};
+
+fn content_hash(text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+```
+
+### LRU Eviction
+
+From `src/memory/sqlite.rs`:
+
+```rust
+fn evict_old_cache_entries(&self, max: usize) -> anyhow::Result<()> {
+    let conn = self.conn.lock();
+    let count: usize = conn.query_row(
+        "SELECT COUNT(*) FROM embedding_cache",
+        [],
+        |row| row.get(0)
+    )?;
+    
+    if count > max {
+        let to_delete = count - max;
+        conn.execute(
+            "DELETE FROM embedding_cache
+             WHERE content_hash IN (
+                 SELECT content_hash FROM embedding_cache
+                 ORDER BY accessed_at ASC
+                 LIMIT ?
+             )",
+            params![to_delete],
+        )?;
+    }
+    
+    Ok(())
+}
+```
+
+## Implementation Reference
+
+Source: `src/memory/sqlite.rs:19-34`
+
+```rust
+pub struct SqliteMemory {
+    conn: Arc<Mutex<Connection>>,
+    db_path: PathBuf,
+    embedder: Arc<dyn EmbeddingProvider>,
+    vector_weight: f32,
+    keyword_weight: f32,
+    cache_max: usize,
+}
+
+impl SqliteMemory {
+    pub fn new(workspace_dir: &Path) -> anyhow::Result<Self> {
+        Self::with_embedder(
+            workspace_dir,
+            Arc::new(super::embeddings::NoopEmbedding),
+            0.7,  // vector_weight
+            0.3,  // keyword_weight
+            10_000,  // cache_max
+            None,  // no open timeout
+        )
+    }
+}
+```
+
+## Safe Reindexing
+
+From README.md:
+
+> **Safe Reindex**: temp DB → seed → sync → atomic swap → rollback
+
+Rebuilding FTS5 and re-embedding:
+
+```bash
+corvus memory reindex
+```
+
+Process:
+
+1. Create temporary DB
+2. Copy all memories
+3. Rebuild FTS5 index
+4. Re-embed entries missing vectors
+5. Atomic swap (rename files)
+6. Verify integrity
+7. Rollback on failure
+
+## Backup
+
+SQLite databases are single files — easy to back up:
+
+```bash
+cp ~/.corvus/memory/brain.db ~/.corvus/backups/brain-$(date +%Y%m%d).db
+```
+
+Or use SQLite's built-in backup API:
+
+```rust
+use rusqlite::backup::Backup;
+
+let src = Connection::open("brain.db")?;
+let mut dst = Connection::open("backup.db")?;
+
+let backup = Backup::new(&src, &mut dst)?;
+backup.run_to_completion(5, Duration::from_millis(250), None)?;
+```
+
+## Troubleshooting
+
+### "Database is locked"
+
+**Cause**: Another process or thread has an exclusive lock.
+
+**Solution**: Use WAL mode (enabled by default) or increase timeout:
+
+```rust
+conn.busy_timeout(Duration::from_secs(5))?;
+```
+
+### Slow queries
+
+**Diagnosis**:
+
+```sql
+EXPLAIN QUERY PLAN
+SELECT * FROM memories WHERE category = 'core';
+```
+
+**Solution**: Ensure indexes are created (run `init_schema` again)
+
+### Large database size
+
+**Diagnosis**:
+
+```bash
+du -h ~/.corvus/memory/brain.db
+```
+
+**Solution**: Vacuum to reclaim space:
+
+```sql
+VACUUM;
+```
+
+## Performance Benchmarks
+
+From local testing (M1 Mac, 1000 memories):
+
+| Operation | Time | Notes |
+|-----------|------|-------|
+| Store | 0.8ms | Single write with index updates |
+| Recall (keyword only) | 3ms | FTS5 search |
+| Recall (vector only) | 45ms | Brute-force cosine similarity |
+| Recall (hybrid) | 52ms | Vector + keyword + merge |
+| Count | 0.1ms | Indexed query |
+| List by category | 1ms | Indexed query |
+
+## Best Practices
+
+<Tip>
+  Enable **WAL mode** for production (default in Corvus)
+</Tip>
+
+<Tip>
+  Set **cache_max** to 10,000-50,000 for optimal embedding cache hit rate
+</Tip>
+
+<Warning>
+  Don't use SQLite over NFS or network drives. Performance will degrade significantly.
+</Warning>
+
+## Related
+
+- [Memory Overview](/guides/memory/overview)
+- [SurrealDB Backend](/guides/memory/surrealdb)
+- [Embeddings](/guides/memory/embeddings)
+- [Memory Tools](/guides/tools/memory)

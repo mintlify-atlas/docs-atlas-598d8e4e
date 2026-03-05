@@ -1,0 +1,211 @@
+---
+title: 'Custom Provider'
+description: 'Build a custom AI model provider'
+---
+
+# Custom Provider
+
+Build a custom provider to integrate any LLM backend with Corvus.
+
+## Overview
+
+Providers implement the `Provider` trait from `src/providers/traits.rs`. The simplest implementation requires only `chat_with_system()`.
+
+## Step 1: Create the Provider
+
+Create `src/providers/my_provider.rs`:
+
+```rust
+use crate::providers::traits::Provider;
+use anyhow::Result;
+use async_trait::async_trait;
+use reqwest::Client;
+
+pub struct MyProvider {
+    api_key: String,
+    base_url: String,
+    client: Client,
+}
+
+impl MyProvider {
+    pub fn new(api_key: &str, base_url: Option<&str>) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+            base_url: base_url.unwrap_or("https://api.example.com").to_string(),
+            client: Client::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for MyProvider {
+    async fn chat_with_system(
+        &self,
+        system_prompt: Option<&str>,
+        message: &str,
+        model: &str,
+        temperature: f64,
+    ) -> Result<String> {
+        let url = format!("{}/v1/chat/completions", self.base_url);
+        
+        let mut messages = Vec::new();
+        
+        if let Some(sys) = system_prompt {
+            messages.push(serde_json::json!({
+                "role": "system",
+                "content": sys
+            }));
+        }
+        
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": message
+        }));
+        
+        let body = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        });
+        
+        let resp = self.client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+        
+        resp["choices"][0]["message"]["content"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("No content in response"))
+    }
+}
+```
+
+## Step 2: Register the Provider
+
+Add to `src/providers/mod.rs`:
+
+```rust
+pub mod my_provider;
+
+pub fn create_provider(name: &str, config: &Config) -> Result<Box<dyn Provider>> {
+    match name {
+        "my_provider" => Ok(Box::new(my_provider::MyProvider::new(
+            &config.api_key,
+            None,
+        ))),
+        // ... existing providers
+        _ => Err(anyhow::anyhow!("Unknown provider: {}", name)),
+    }
+}
+```
+
+## Step 3: Configure
+
+Update `~/.corvus/config.toml`:
+
+```toml
+api_key = "your-api-key"
+default_provider = "my_provider"
+default_model = "my-model-v1"
+```
+
+## Step 4: Test
+
+Add tests in `src/providers/my_provider.rs`:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*
+;
+
+    #[tokio::test]
+    async fn test_my_provider() {
+        let provider = MyProvider::new("test-key", None);
+        
+        // Mock API call or use test endpoint
+        let result = provider.chat_with_system(
+            Some("You are helpful"),
+            "Hello",
+            "test-model",
+            0.7,
+        ).await;
+        
+        assert!(result.is_ok());
+    }
+}
+```
+
+Run tests:
+
+```bash
+cargo test providers::my_provider
+```
+
+## Advanced Features
+
+### Native Tool Calling
+
+If your provider supports native tool calling:
+
+```rust
+impl Provider for MyProvider {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            native_tool_calling: true,
+        }
+    }
+    
+    async fn chat_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        model: &str,
+        temperature: f64,
+    ) -> Result<ChatResponse> {
+        // Format tools for your API
+        // Parse tool_use from response
+        // Return ChatResponse with tool_calls
+    }
+}
+```
+
+### Streaming
+
+For streaming support:
+
+```rust
+use futures_util::stream::BoxStream;
+
+impl Provider for MyProvider {
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+    
+    fn stream_chat_with_system(
+        &self,
+        system_prompt: Option<&str>,
+        message: &str,
+        model: &str,
+        temperature: f64,
+        options: StreamOptions,
+    ) -> BoxStream<'static, StreamResult<StreamChunk>> {
+        // Return async stream of chunks
+    }
+}
+```
+
+## Full Example
+
+See `examples/custom_provider.rs:19-59` for a complete Ollama integration.
+
+## Related
+
+- [Provider Trait](/api/traits/provider)
+- [Example: Ollama Provider](/extend/examples/provider)
+- [Providers Guide](/guides/providers/overview)

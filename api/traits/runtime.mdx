@@ -1,0 +1,362 @@
+---
+title: 'RuntimeAdapter Trait'
+description: 'Core trait for runtime environment adapters'
+icon: 'server'
+---
+
+# RuntimeAdapter Trait
+
+The `RuntimeAdapter` trait abstracts platform differences, enabling the same agent code to run on native, Docker, WASM, edge, and embedded environments.
+
+Source: `src/runtime/traits.rs:5-32`
+
+## Trait Definition
+
+```rust
+use std::path::{Path, PathBuf};
+use tokio::process::Command;
+
+pub trait RuntimeAdapter: Send + Sync {
+    /// Human-readable runtime name
+    fn name(&self) -> &str;
+    
+    /// Whether this runtime supports shell access
+    fn has_shell_access(&self) -> bool;
+    
+    /// Whether this runtime supports filesystem access
+    fn has_filesystem_access(&self) -> bool;
+    
+    /// Base storage path for this runtime
+    fn storage_path(&self) -> PathBuf;
+    
+    /// Whether long-running processes (gateway, heartbeat) are supported
+    fn supports_long_running(&self) -> bool;
+    
+    /// Maximum memory budget in bytes (0 = unlimited)
+    fn memory_budget(&self) -> u64 {
+        0
+    }
+    
+    /// Build a shell command process for this runtime
+    fn build_shell_command(
+        &self,
+        command: &str,
+        workspace_dir: &Path,
+    ) -> anyhow::Result<Command>;
+}
+```
+
+## Built-in Runtimes
+
+From `src/runtime/mod.rs`:
+
+| Runtime | File | Status | Use Case |
+|---------|------|--------|----------|
+| Native | `native.rs` | ✅ Stable | Local development, servers |
+| Docker | `docker.rs` | ✅ Stable | Sandboxed execution |
+| WASM | `wasm.rs` | 🚧 Planned | Edge, browsers |
+
+## Native Runtime
+
+From `src/runtime/native.rs:6-31`:
+
+```rust
+pub struct NativeRuntime;
+
+impl NativeRuntime {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl RuntimeAdapter for NativeRuntime {
+    fn name(&self) -> &str {
+        "native"
+    }
+    
+    fn has_shell_access(&self) -> bool {
+        true
+    }
+    
+    fn has_filesystem_access(&self) -> bool {
+        true
+    }
+    
+    fn storage_path(&self) -> PathBuf {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(".corvus")
+    }
+    
+    fn supports_long_running(&self) -> bool {
+        true
+    }
+    
+    fn build_shell_command(
+        &self,
+        command: &str,
+        workspace_dir: &Path,
+    ) -> anyhow::Result<Command> {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+           .arg(command)
+           .current_dir(workspace_dir);
+        Ok(cmd)
+    }
+}
+```
+
+## Docker Runtime
+
+From `src/runtime/docker.rs:15-184`:
+
+```rust
+pub struct DockerRuntime {
+    image: String,
+    network: String,
+    memory_limit_mb: Option<u32>,
+    cpu_limit: Option<f32>,
+    read_only_rootfs: bool,
+    mount_workspace: bool,
+}
+
+impl DockerRuntime {
+    pub fn new(config: &DockerRuntimeConfig) -> Self {
+        Self {
+            image: config.image.clone(),
+            network: config.network.clone(),
+            memory_limit_mb: config.memory_limit_mb,
+            cpu_limit: config.cpu_limit,
+            read_only_rootfs: config.read_only_rootfs,
+            mount_workspace: config.mount_workspace,
+        }
+    }
+}
+
+impl RuntimeAdapter for DockerRuntime {
+    fn name(&self) -> &str {
+        "docker"
+    }
+    
+    fn has_shell_access(&self) -> bool {
+        true
+    }
+    
+    fn has_filesystem_access(&self) -> bool {
+        self.mount_workspace
+    }
+    
+    fn storage_path(&self) -> PathBuf {
+        PathBuf::from("/workspace")
+    }
+    
+    fn supports_long_running(&self) -> bool {
+        false  // containers are ephemeral
+    }
+    
+    fn memory_budget(&self) -> u64 {
+        self.memory_limit_mb
+            .map(|mb| mb as u64 * 1024 * 1024)
+            .unwrap_or(0)
+    }
+    
+    fn build_shell_command(
+        &self,
+        command: &str,
+        workspace_dir: &Path,
+    ) -> anyhow::Result<Command> {
+        let mut cmd = Command::new("docker");
+        cmd.arg("run")
+           .arg("--rm")
+           .arg("--network").arg(&self.network);
+        
+        // Resource limits
+        if let Some(mb) = self.memory_limit_mb {
+            cmd.arg("--memory").arg(format!("{}m", mb));
+        }
+        if let Some(cpu) = self.cpu_limit {
+            cmd.arg("--cpus").arg(format!("{}", cpu));
+        }
+        
+        // Security
+        if self.read_only_rootfs {
+            cmd.arg("--read-only");
+        }
+        
+        // Mount workspace
+        if self.mount_workspace {
+            cmd.arg("-v")
+               .arg(format!("{}:/workspace", workspace_dir.display()));
+        }
+        
+        // Execute command
+        cmd.arg(&self.image)
+           .arg("sh")
+           .arg("-c")
+           .arg(command);
+        
+        Ok(cmd)
+    }
+}
+```
+
+## Configuration
+
+### Native (Default)
+
+```toml
+[runtime]
+kind = "native"
+```
+
+### Docker
+
+```toml
+[runtime]
+kind = "docker"
+
+[runtime.docker]
+image = "alpine:3.20"
+network = "none"              # isolated
+memory_limit_mb = 512
+cpu_limit = 1.0
+read_only_rootfs = true       # prevent writes to container
+mount_workspace = true
+```
+
+## Custom Runtime Implementation
+
+```rust
+use corvus::runtime::RuntimeAdapter;
+use std::path::{Path, PathBuf};
+use tokio::process::Command;
+
+pub struct EdgeRuntime {
+    storage: PathBuf,
+}
+
+impl RuntimeAdapter for EdgeRuntime {
+    fn name(&self) -> &str {
+        "edge"
+    }
+    
+    fn has_shell_access(&self) -> bool {
+        false  // no shell on edge
+    }
+    
+    fn has_filesystem_access(&self) -> bool {
+        true  // limited KV storage
+    }
+    
+    fn storage_path(&self) -> PathBuf {
+        self.storage.clone()
+    }
+    
+    fn supports_long_running(&self) -> bool {
+        true  // edge functions are long-lived
+    }
+    
+    fn memory_budget(&self) -> u64 {
+        128 * 1024 * 1024  // 128MB
+    }
+    
+    fn build_shell_command(
+        &self,
+        _command: &str,
+        _workspace_dir: &Path,
+    ) -> anyhow::Result<Command> {
+        Err(anyhow::anyhow!("Shell not supported on edge runtime"))
+    }
+}
+```
+
+## Tool Integration
+
+Tools query runtime capabilities:
+
+```rust
+impl Tool for ShellTool {
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        if !self.runtime.has_shell_access() {
+            return Ok(ToolResult {
+                success: false,
+                error: Some("Shell not supported in this runtime".into()),
+                ..Default::default()
+            });
+        }
+        
+        let mut cmd = self.runtime.build_shell_command(
+            command,
+            &self.security.workspace_dir,
+        )?;
+        
+        // Execute...
+    }
+}
+```
+
+## Registration
+
+From `src/runtime/mod.rs:41-66`:
+
+```rust
+pub fn create_runtime(config: &RuntimeConfig) -> anyhow::Result<Arc<dyn RuntimeAdapter>> {
+    match config.kind.as_str() {
+        "native" => Ok(Arc::new(NativeRuntime::new())),
+        "docker" => Ok(Arc::new(DockerRuntime::new(&config.docker))),
+        "wasm" => Err(anyhow::anyhow!("WASM runtime not yet implemented")),
+        other => Err(anyhow::anyhow!("Unknown runtime kind: {}", other)),
+    }
+}
+```
+
+## Best Practices
+
+<Tip>
+  Use **Docker runtime** for untrusted code execution
+</Tip>
+
+<Tip>
+  Implement `memory_budget()` to enable resource-aware tool selection
+</Tip>
+
+<Warning>
+  Always validate `has_shell_access()` and `has_filesystem_access()` before using tools
+</Warning>
+
+## Future Runtimes
+
+### WASM (Planned)
+
+```rust
+pub struct WasmRuntime {
+    memory_pages: u32,
+}
+
+impl RuntimeAdapter for WasmRuntime {
+    fn has_shell_access(&self) -> bool { false }
+    fn has_filesystem_access(&self) -> bool { false }
+    fn memory_budget(&self) -> u64 { self.memory_pages as u64 * 65536 }
+}
+```
+
+### Embedded (Raspberry Pi, ESP32)
+
+```rust
+pub struct EmbeddedRuntime {
+    flash_size: u64,
+}
+
+impl RuntimeAdapter for EmbeddedRuntime {
+    fn has_shell_access(&self) -> bool { false }
+    fn storage_path(&self) -> PathBuf { PathBuf::from("/flash") }
+    fn memory_budget(&self) -> u64 { 512 * 1024 }  // 512KB RAM
+}
+```
+
+## Related
+
+- [Provider Trait](/api/traits/provider)
+- [Tool Trait](/api/traits/tool)
+- [Security Policy](/guides/security/policy)
+- [Deployment Guide](/guides/deployment)

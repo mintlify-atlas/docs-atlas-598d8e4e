@@ -1,0 +1,104 @@
+---
+title: 'corvus gateway'
+description: 'Start the webhook server'
+---
+
+# corvus gateway
+
+Start the webhook server for HTTP-based integrations.
+
+## Usage
+
+```bash
+corvus gateway [OPTIONS]
+```
+
+## Default Binding
+
+```bash
+corvus gateway
+```
+
+Starts on `127.0.0.1:8080` (localhost only).
+
+## Options
+
+<ParamField path="-p, --port" type="u16">
+  Port to listen on. Use `0` for random available port.
+</ParamField>
+
+<ParamField path="--host" type="string" default="127.0.0.1">
+  Host to bind to. Defaults to config `gateway.host`.
+</ParamField>
+
+## Examples
+
+### Custom Port
+
+```bash
+corvus gateway --port 3000
+```
+
+### Random Port (Security Hardened)
+
+```bash
+corvus gateway --port 0
+```
+
+Output:
+
+```
+🚀 Starting Corvus Gateway on 127.0.0.1:54321 (random port)
+```
+
+### Public Binding (with Tunnel)
+
+```bash
+corvus gateway --host 0.0.0.0 --port 8080
+```
+
+<Warning>
+  Never expose `0.0.0.0` without a tunnel or `allow_public_bind = true` in config.
+</Warning>
+
+## Endpoints
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/health` | GET | None | Health check |
+| `/pair` | POST | X-Pairing-Code | Exchange pairing code |
+| `/webhook` | POST | Bearer token | Send message |
+| `/whatsapp` | GET | Query params | WhatsApp verification |
+| `/whatsapp` | POST | Meta signature | WhatsApp webhook |
+
+## Pairing Flow
+
+1. Start gateway
+2. Note the 6-digit pairing code in logs
+3. Exchange code for token:
+
+```bash
+curl -X POST http://localhost:8080/pair \
+  -H "X-Pairing-Code: 123456"
+```
+
+Response:
+
+```json
+{"token": "eyJ0eXAiOi..."}
+```
+
+4. Use token for webhook requests:
+
+```bash
+curl -X POST http://localhost:8080/webhook \
+  -H "Authorization: Bearer eyJ0eXAiOi..." \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello, Corvus!"}'
+```
+
+## Related
+
+- [CLI Commands](/api/cli/commands)
+- [Agent Command](/api/cli/agent)
+- [Daemon Command](/api/cli/daemon)

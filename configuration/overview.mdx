@@ -1,0 +1,208 @@
+---
+title: Configuration Overview
+description: Learn how to configure Corvus AI agent framework using TOML configuration files
+---
+
+## Configuration File Location
+
+Corvus stores its configuration in `~/.corvus/config.toml` by default. This file is automatically created during onboarding with secure permissions (mode `0600` on Unix systems).
+
+### Custom Configuration Directory
+
+You can override the configuration directory using the `CORVUS_WORKSPACE` environment variable:
+
+```bash
+export CORVUS_WORKSPACE=/path/to/custom/workspace
+corvus status
+```
+
+The configuration path resolution follows this priority:
+
+1. **CORVUS_WORKSPACE** environment variable
+2. Persisted active workspace marker from onboarding
+3. Default `~/.corvus` layout
+
+## Configuration Structure
+
+The configuration file is organized into the following sections:
+
+<CardGroup cols={2}>
+  <Card title="Providers" icon="plug" href="/configuration/providers">
+    AI model provider settings (API keys, models, endpoints)
+  </Card>
+  <Card title="Channels" icon="comments" href="/configuration/channels">
+    Messaging platform integrations (Telegram, Discord, etc.)
+  </Card>
+  <Card title="Memory" icon="brain" href="/configuration/memory">
+    Memory backend configuration and embedding settings
+  </Card>
+  <Card title="Security" icon="shield" href="/configuration/security">
+    Gateway security, autonomy levels, and runtime isolation
+  </Card>
+</CardGroup>
+
+## Core Configuration Fields
+
+<ParamField path="api_key" type="string" optional>
+  Primary API key for the default provider. Automatically encrypted when `secrets.encrypt = true`.
+</ParamField>
+
+<ParamField path="api_url" type="string" optional>
+  Base URL override for provider API (e.g., `http://10.0.0.1:11434` for remote Ollama).
+</ParamField>
+
+<ParamField path="default_provider" type="string" default="openrouter">
+  Default AI provider to use. See [Providers](/configuration/providers) for supported values.
+</ParamField>
+
+<ParamField path="default_model" type="string" default="anthropic/claude-sonnet-4">
+  Default model to use with the provider.
+</ParamField>
+
+<ParamField path="default_temperature" type="number" default={0.7}>
+  Default temperature for model inference (0.0-2.0). Higher values increase randomness.
+</ParamField>
+
+## Environment Variable Overrides
+
+Environment variables take precedence over config file values:
+
+### Provider Settings
+
+```bash
+export CORVUS_API_KEY=sk-...
+export CORVUS_PROVIDER=anthropic
+export CORVUS_MODEL=claude-opus-4-20250514
+export CORVUS_TEMPERATURE=0.9
+```
+
+### Gateway Settings
+
+```bash
+export CORVUS_GATEWAY_PORT=8080
+export CORVUS_GATEWAY_HOST=0.0.0.0
+export CORVUS_ALLOW_PUBLIC_BIND=true
+```
+
+### Memory Settings
+
+```bash
+export CORVUS_MEMORY_BACKEND=surreal
+export CORVUS_SURREALDB_URL=http://127.0.0.1:8000
+export CORVUS_SURREALDB_NAMESPACE=corvus
+export CORVUS_SURREALDB_DATABASE=memory
+```
+
+## Configuration Validation
+
+Corvus validates configuration at runtime to catch errors early:
+
+- **MCP servers**: Validates command paths, timeout values, and environment variables
+- **Security permissions**: Ensures config file has secure permissions (Unix: 0600)
+- **Required fields**: Checks for missing required fields based on enabled features
+
+## Quick Setup
+
+<Tabs>
+  <Tab title="Interactive Wizard">
+    The interactive wizard walks you through all configuration options:
+
+    ```bash
+    corvus onboard --interactive
+    ```
+
+    This prompts for:
+    - Provider and API key
+    - Memory backend
+    - Channel configurations
+    - Security settings
+  </Tab>
+  <Tab title="Quick Setup">
+    For minimal configuration (provider and API key only):
+
+    ```bash
+    corvus onboard --api-key sk-... --provider openrouter
+    ```
+  </Tab>
+  <Tab title="Channels Only">
+    To reconfigure channels without affecting other settings:
+
+    ```bash
+    corvus onboard --channels-only
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration Example
+
+Here's a complete example configuration file:
+
+```toml
+api_key = "enc:..."  # Encrypted when secrets.encrypt = true
+default_provider = "openrouter"
+default_model = "anthropic/claude-sonnet-4-20250514"
+default_temperature = 0.7
+
+[memory]
+backend = "sqlite"
+auto_save = true
+embedding_provider = "openai"
+vector_weight = 0.7
+keyword_weight = 0.3
+
+[gateway]
+port = 3000
+host = "127.0.0.1"
+require_pairing = true
+allow_public_bind = false
+
+[autonomy]
+level = "supervised"
+workspace_only = true
+allowed_commands = ["git", "npm", "cargo"]
+forbidden_paths = ["/etc", "/root"]
+
+[runtime]
+kind = "native"
+
+[runtime.docker]
+image = "alpine:3.20"
+network = "none"
+memory_limit_mb = 512
+```
+
+## Security Best Practices
+
+<Warning>
+  Never commit `config.toml` to version control. It contains encrypted secrets that are tied to your local machine.
+</Warning>
+
+1. **Use encrypted secrets**: Enable `secrets.encrypt = true` (default) to encrypt API keys
+2. **Secure file permissions**: Keep config file mode at `0600` (owner read/write only)
+3. **Environment variables**: Use environment variables for CI/CD pipelines instead of config files
+4. **Regular key rotation**: Rotate API keys periodically and update configuration
+
+## Configuration Backup
+
+Corvus automatically creates a backup when saving configuration:
+
+- Backup file: `~/.corvus/config.toml.bak`
+- Atomic writes with temp files prevent corruption
+- Directory fsync ensures durability
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Providers" icon="plug" href="/configuration/providers">
+    Set up AI model providers and API keys
+  </Card>
+  <Card title="Set Up Channels" icon="comments" href="/configuration/channels">
+    Enable messaging platform integrations
+  </Card>
+  <Card title="Configure Memory" icon="brain" href="/configuration/memory">
+    Choose memory backend and embedding settings
+  </Card>
+  <Card title="Security Settings" icon="shield" href="/configuration/security">
+    Configure autonomy levels and runtime isolation
+  </Card>
+</CardGroup>

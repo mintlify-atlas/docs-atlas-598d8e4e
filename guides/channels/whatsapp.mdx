@@ -1,0 +1,455 @@
+---
+title: WhatsApp Channel
+description: Set up WhatsApp Business Cloud API for Corvus agent
+---
+
+The WhatsApp channel allows your Corvus agent to interact with users via WhatsApp Business using Meta's Cloud API. Unlike polling-based channels (Telegram, Discord), WhatsApp uses **webhooks** for push-based message delivery.
+
+## Features
+
+- Webhook-based message delivery (push, not poll)
+- E.164 phone number allowlist
+- Meta Business Cloud API integration
+- Text message support (images/media coming soon)
+- Webhook verification
+- Automatic phone number normalization
+
+## Prerequisites
+
+- Meta (Facebook) Developer Account
+- WhatsApp Business App in Meta Developer Console
+- Public HTTPS endpoint (ngrok, Cloudflare Tunnel, or Tailscale Funnel)
+
+## WhatsApp Business Cloud API Setup
+
+### 1. Create a Meta Business App
+
+1. Go to [Meta for Developers](https://developers.facebook.com/)
+2. Click **My Apps** → **Create App**
+3. Select app type: **Business**
+4. Enter app name (e.g., "Corvus WhatsApp Bot")
+5. Enter contact email
+6. Click **Create App**
+
+### 2. Add WhatsApp Product
+
+1. In your app dashboard, click **Add Product**
+2. Find **WhatsApp** and click **Set Up**
+3. You'll be redirected to WhatsApp → **Getting Started**
+
+### 3. Get Required Credentials
+
+You need three pieces of information:
+
+#### Access Token
+
+1. Navigate to **WhatsApp** → **API Setup**
+2. Under **Temporary access token**, click **Generate token**
+3. Copy the token (starts with `EAA...`):
+   ```
+   EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+
+**Production:** For long-lived tokens, create a System User:
+- Business Settings → System Users → Add → Generate token with `whatsapp_business_messaging` permission
+
+#### Phone Number ID
+
+1. In **WhatsApp** → **API Setup**, locate **Phone number ID**
+2. Copy the numeric ID:
+   ```
+   123456789012345
+   ```
+
+#### Verify Token
+
+You define this yourself (any random string):
+
+```bash
+openssl rand -hex 16
+```
+
+Example: `3f7a9b2c8d1e6f4a7b9c8d1e6f4a7b9c`
+
+### 4. Configure Corvus
+
+Add WhatsApp configuration to `~/.corvus/config.toml`:
+
+```toml
+[channels_config.whatsapp]
+access_token = "EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+phone_number_id = "123456789012345"
+verify_token = "3f7a9b2c8d1e6f4a7b9c8d1e6f4a7b9c"
+allowed_numbers = ["+1234567890", "+9876543210"]
+```
+
+#### Configuration Options
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `access_token` | String | Yes | Meta access token (temporary or system user token) |
+| `phone_number_id` | String | Yes | WhatsApp phone number ID from API Setup |
+| `verify_token` | String | Yes | Your custom verify token for webhook verification |
+| `allowed_numbers` | Array | Yes | List of allowed phone numbers in E.164 format |
+
+### 5. Expose Public HTTPS Endpoint
+
+WhatsApp requires HTTPS for webhooks. Use a tunnel:
+
+**Option A: ngrok**
+
+```bash
+ngrok http 8080
+```
+
+Output:
+```
+Forwarding  https://abc123.ngrok.io -> http://localhost:8080
+```
+
+**Option B: Cloudflare Tunnel**
+
+```bash
+cloudflared tunnel --url http://localhost:8080
+```
+
+**Option C: Tailscale Funnel**
+
+```bash
+tailscale funnel 8080
+```
+
+**Important:** Note your public URL (e.g., `https://abc123.ngrok.io`).
+
+### 6. Configure Meta Webhook
+
+1. In Meta Developer Console, navigate to **WhatsApp** → **Configuration** → **Webhook**
+2. Click **Edit**
+3. Enter webhook details:
+   - **Callback URL:** `https://your-public-url/whatsapp`
+   - **Verify Token:** (the token you defined in step 3)
+4. Click **Verify and Save**
+
+Meta will send a GET request to verify the webhook:
+
+```http
+GET /whatsapp?hub.mode=subscribe&hub.challenge=123456&hub.verify_token=YOUR_TOKEN
+```
+
+Corvus gateway responds with the `hub.challenge` value to complete verification.
+
+5. **Subscribe to Webhook Fields:**
+   - Click **Manage** button
+   - Subscribe to: ✅ **messages**
+   - Click **Save**
+
+### 7. Start Corvus
+
+Start the agent runtime with gateway:
+
+```bash
+corvus channel start
+```
+
+Expected output:
+```
+💬 Starting channels...
+  ✅ WhatsApp connected
+WhatsApp channel active (webhook mode). 
+Configure Meta webhook to POST to your gateway's /whatsapp endpoint.
+```
+
+### 8. Test
+
+1. Send a WhatsApp message to your Business phone number
+2. If your number is in `allowed_numbers`, the bot responds via the LLM
+3. Check Corvus logs:
+   ```
+   💬 [whatsapp] from +1234567890: Hello Corvus!
+   ⏳ Processing message...
+   🤖 Reply (1234ms): Hi! How can I help?
+   ```
+
+## Phone Number Allowlist (E.164 Format)
+
+### E.164 Format
+
+Phone numbers must be in **E.164 international format**:
+
+```
++[country code][subscriber number]
+```
+
+Examples:
+- US: `+1234567890`
+- UK: `+447700900000`
+- India: `+919876543210`
+
+**Incorrect formats:**
+- ❌ `1234567890` (missing `+`)
+- ❌ `(123) 456-7890` (formatting)
+- ❌ `+1 234 567 890` (spaces)
+
+### Configuration
+
+```toml
+allowed_numbers = [
+    "+1234567890",    # US number
+    "+447700900000",  # UK number
+    "+919876543210"   # India number
+]
+```
+
+### Wildcard (Allow All)
+
+**Not recommended for production:**
+
+```toml
+allowed_numbers = ["*"]
+```
+
+### Empty Allowlist
+
+An empty allowlist denies everyone:
+
+```toml
+allowed_numbers = []  # Nobody can message the bot
+```
+
+## Webhook Verification
+
+When you configure the webhook in Meta Developer Console, Meta sends a verification request:
+
+```http
+GET /whatsapp?hub.mode=subscribe&hub.challenge=1234567890&hub.verify_token=YOUR_TOKEN
+```
+
+Corvus gateway (`src/gateway/mod.rs`) handles this:
+
+1. Checks `hub.verify_token` matches your configured `verify_token`
+2. Responds with `hub.challenge` value
+3. Meta marks webhook as verified
+
+If verification fails:
+- Check `verify_token` matches exactly (case-sensitive)
+- Ensure Corvus gateway is running
+- Check tunnel is forwarding to correct port
+
+## Webhook Payload
+
+Meta sends POST requests to `/whatsapp` with this structure:
+
+```json
+{
+  "object": "whatsapp_business_account",
+  "entry": [{
+    "id": "123",
+    "changes": [{
+      "value": {
+        "messaging_product": "whatsapp",
+        "metadata": {
+          "display_phone_number": "15551234567",
+          "phone_number_id": "123456789"
+        },
+        "messages": [{
+          "from": "1234567890",
+          "id": "wamid.xxx",
+          "timestamp": "1699999999",
+          "type": "text",
+          "text": {
+            "body": "Hello Corvus!"
+          }
+        }]
+      },
+      "field": "messages"
+    }]
+  }]
+}
+```
+
+Corvus parses this and extracts:
+- `from`: Phone number (normalized to E.164)
+- `text.body`: Message content
+- `timestamp`: Unix timestamp
+
+## Testing and Verification
+
+### 1. Health Check
+
+Verify WhatsApp API connectivity:
+
+```bash
+corvus channel doctor
+```
+
+Expected output:
+```
+🩺 Corvus Channel Doctor
+
+  ✅ WhatsApp  healthy
+```
+
+This checks if Corvus can reach Meta Graph API with your credentials.
+
+### 2. Send Test Message
+
+1. Send a WhatsApp message to your Business phone number from an allowlisted number
+2. Check Corvus logs for processing:
+   ```
+   💬 [whatsapp] from +1234567890: test message
+   ⏳ Processing message...
+   🤖 Reply (567ms): Hello! How can I assist you?
+   ```
+
+### 3. Unauthorized Number Test
+
+Send from a number NOT in `allowed_numbers`:
+
+**Corvus logs:**
+```
+WhatsApp: ignoring message from unauthorized number: +9999999999. 
+Add to allowed_numbers in config.toml, then run `corvus onboard --channels-only`.
+```
+
+The sender receives no response (allowlist enforced).
+
+## Message Types
+
+### Currently Supported
+
+- ✅ **Text messages** - Full support
+
+### Coming Soon
+
+- ⏳ **Images** - Receiving/sending images
+- ⏳ **Audio** - Voice messages
+- ⏳ **Video** - Video messages
+- ⏳ **Documents** - PDF, DOCX, etc.
+- ⏳ **Location** - GPS coordinates
+- ⏳ **Contacts** - Contact card sharing
+
+Currently, non-text messages are logged and skipped:
+
+```
+WhatsApp: skipping non-text message from +1234567890
+```
+
+## Troubleshooting
+
+### Webhook Verification Failed
+
+**Error in Meta Console:**
+```
+The callback URL or verify token couldn't be validated. Please verify the provided information or try again later.
+```
+
+**Causes:**
+1. `verify_token` mismatch (case-sensitive)
+2. Corvus gateway not running
+3. Tunnel not forwarding to correct port
+4. HTTPS required (not HTTP)
+
+**Solution:**
+
+```bash
+# 1. Verify gateway is running
+corvus channel start
+
+# 2. Check config
+grep verify_token ~/.corvus/config.toml
+
+# 3. Test webhook manually
+curl "http://localhost:8080/whatsapp?hub.mode=subscribe&hub.challenge=test&hub.verify_token=YOUR_TOKEN"
+# Should return: test
+
+# 4. Ensure tunnel is active
+ngrok http 8080
+```
+
+### Messages Not Received
+
+**1. Check Webhook Subscription:**
+
+Meta Developer Console → WhatsApp → Configuration → Webhook → Manage:
+- ✅ **messages** field must be subscribed
+
+**2. Check Corvus Logs:**
+
+No log output when sending message?
+- Webhook not reaching Corvus
+- Check tunnel is active
+- Verify callback URL in Meta console
+
+**3. Check Allowlist:**
+
+```bash
+grep allowed_numbers ~/.corvus/config.toml
+```
+
+Ensure your phone number is in E.164 format.
+
+### Bot Not Sending Reply
+
+**Corvus logs:**
+```
+WhatsApp send failed: 403 — {"error":{"message":"(#100) Param to must be a valid WhatsApp ID"}}
+```
+
+**Cause**: Invalid phone number format.
+
+**Solution**: Use E.164 format in `allowed_numbers`.
+
+### Access Token Expired
+
+**Error:**
+```
+WhatsApp API error: 401
+```
+
+**Cause**: Temporary access token expired (24 hours).
+
+**Solution**: Generate a new token or use a System User token:
+
+1. Meta Developer Console → Business Settings → System Users
+2. Create System User
+3. Assign WhatsApp Business Account asset
+4. Generate token with `whatsapp_business_messaging` permission
+5. Update `access_token` in `config.toml`
+
+### Rate Limits
+
+Meta enforces rate limits based on your Business account tier:
+
+- **Free tier**: 1,000 conversations per month
+- **Paid tier**: Higher limits based on billing
+
+Conversation = 24-hour window per unique user.
+
+## Security Best Practices
+
+1. **Use E.164 Format**: Always validate phone numbers
+2. **Empty Allowlist by Default**: Explicitly add each authorized number
+3. **System User Tokens**: Use long-lived tokens for production (not temporary tokens)
+4. **Keep Tokens Secret**: Never commit access tokens to version control
+5. **Webhook Signature Verification**: Enable Meta signature verification (coming soon)
+6. **Monitor Usage**: Track conversations in Meta Business Manager
+7. **HTTPS Only**: Always use secure tunnels for webhooks
+
+## Gateway Endpoints
+
+Corvus gateway exposes these endpoints for WhatsApp:
+
+| Endpoint | Method | Purpose | Parameters |
+|----------|--------|---------|------------|
+| `/whatsapp` | GET | Webhook verification | `hub.mode`, `hub.verify_token`, `hub.challenge` |
+| `/whatsapp` | POST | Incoming message webhook | JSON payload from Meta |
+
+## Reference
+
+- Source: `clients/agent-runtime/src/channels/whatsapp.rs`
+- Gateway handler: `clients/agent-runtime/src/gateway/mod.rs`
+- Meta Cloud API: https://developers.facebook.com/docs/whatsapp/cloud-api
+- E.164 Format: https://en.wikipedia.org/wiki/E.164
+- Meta Business Manager: https://business.facebook.com/
+- README: `clients/agent-runtime/README.md:239-276`
+- Line range: `whatsapp.rs:1-1115`

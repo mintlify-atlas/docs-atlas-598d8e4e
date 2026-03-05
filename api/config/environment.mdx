@@ -1,0 +1,126 @@
+---
+title: 'Environment Variables'
+description: 'Configuration via environment variables'
+icon: 'code'
+---
+
+# Environment Variables
+
+Corvus supports configuration via environment variables. They override config.toml values.
+
+## Core Variables
+
+### Logging
+
+<ParamField path="RUST_LOG" type="string" default="info">
+  Log level: `error`, `warn`, `info`, `debug`, `trace`
+  
+  ```bash
+  RUST_LOG=debug corvus agent
+  ```
+</ParamField>
+
+### Session
+
+<ParamField path="CORVUS_SESSION_ID" type="string">
+  Override session ID
+  
+  ```bash
+  CORVUS_SESSION_ID=my-session corvus agent
+  ```
+</ParamField>
+
+### Updates
+
+<ParamField path="CORVUS_DISABLE_UPDATE_CHECK" type="string">
+  Disable update notifications. Set to `1` to disable.
+  
+  ```bash
+  CORVUS_DISABLE_UPDATE_CHECK=1 corvus status
+  ```
+</ParamField>
+
+## Memory Configuration
+
+<ParamField path="CORVUS_MEMORY_BACKEND" type="string">
+  Memory backend: `sqlite`, `surreal`, `markdown`, `none`
+  
+  ```bash
+  CORVUS_MEMORY_BACKEND=surreal corvus agent
+  ```
+</ParamField>
+
+### SurrealDB
+
+<ParamField path="CORVUS_SURREALDB_URL" type="string">
+  SurrealDB connection URL
+  
+  ```bash
+  CORVUS_SURREALDB_URL=http://127.0.0.1:8000
+  ```
+</ParamField>
+
+<ParamField path="CORVUS_SURREALDB_NAMESPACE" type="string">
+  SurrealDB namespace
+</ParamField>
+
+<ParamField path="CORVUS_SURREALDB_DATABASE" type="string">
+  SurrealDB database name
+</ParamField>
+
+<ParamField path="CORVUS_SURREALDB_USERNAME" type="string">
+  SurrealDB username
+</ParamField>
+
+<ParamField path="CORVUS_SURREALDB_PASSWORD" type="string">
+  SurrealDB password
+</ParamField>
+
+<ParamField path="CORVUS_SURREALDB_TOKEN" type="string">
+  SurrealDB auth token (preferred over username/password)
+</ParamField>
+
+## Testing
+
+<ParamField path="CORVUS_UNIFIED_LOOP_PREVIEW" type="string">
+  Enable unified loop preview mode. Set to `1`.
+</ParamField>
+
+<ParamField path="CORVUS_UNIFIED_LOOP_ONLY" type="string">
+  Show only unified loop events. Set to `1`.
+</ParamField>
+
+<ParamField path="CORVUS_UNIFIED_CANONICAL_ONLY" type="string">
+  Show only canonical outcome. Set to `1`.
+</ParamField>
+
+<ParamField path="CORVUS_UNIFIED_APPROVE" type="string">
+  Auto-approve tool calls in tests. Set to `1`.
+</ParamField>
+
+<ParamField path="CORVUS_UNIFIED_TEST_TRIGGERS" type="string">
+  Enable test triggers. Set to `1`.
+</ParamField>
+
+## Channel Autostart
+
+<ParamField path="CORVUS_AUTOSTART_CHANNELS" type="string">
+  Auto-start channels after onboarding. Set to `1`.
+</ParamField>
+
+## Example: Full SurrealDB Setup
+
+```bash
+export CORVUS_MEMORY_BACKEND=surreal
+export CORVUS_SURREALDB_URL=http://127.0.0.1:8000
+export CORVUS_SURREALDB_NAMESPACE=corvus
+export CORVUS_SURREALDB_DATABASE=memory
+export CORVUS_SURREALDB_TOKEN=eyJ0eXAi...
+
+corvus agent
+```
+
+## Related
+
+- [Configuration Schema](/api/config/schema)
+- [CLI Commands](/api/cli/commands)

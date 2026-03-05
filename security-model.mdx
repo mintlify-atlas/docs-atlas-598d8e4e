@@ -1,0 +1,605 @@
+---
+title: Security Model
+description: Understanding Corvus security layers, threat model, and best practices
+---
+
+Corvus implements a **defense-in-depth security model** with multiple overlapping layers. Security is a first-class concern, built into every component from the ground up.
+
+<Warning>
+**Security First Philosophy**
+
+Every decision, every line of code, every architecture choice MUST prioritize:
+1. **Security First** - Always think about attacks, vulnerabilities, and safe defaults
+2. **Performance Second** - Optimize for efficiency after security
+
+These principles override convenience, speed of development, and "getting it done quickly."
+</Warning>
+
+## Security Layers
+
+Corvus provides multiple overlapping security boundaries:
+
+```
+┌───────────────────────────────────────────────────────────┐
+│ Layer 5: Gateway Pairing & Authentication                 │
+│  • One-time pairing codes                                 │
+│  • Bearer token authentication                            │
+│  • Rate limiting & brute-force protection                 │
+└─────────────────┬─────────────────────────────────────────┘
+                  │
+┌─────────────────▼─────────────────────────────────────────┐
+│ Layer 4: Security Policy Engine                           │
+│  • Autonomy levels (read-only, supervised, full)          │
+│  • Command allowlists & path blocklists                   │
+│  • Risk assessment & approval workflows                   │
+│  • Rate limiting (max actions per hour)                   │
+└─────────────────┬─────────────────────────────────────────┘
+                  │
+┌─────────────────▼─────────────────────────────────────────┐
+│ Layer 3: Runtime Sandboxing                               │
+│  • Docker container isolation (process, network, fs)      │
+│  • Landlock/Firejail (Linux kernel sandboxing)            │
+│  • Resource limits (memory, CPU, time)                    │
+└─────────────────┬─────────────────────────────────────────┘
+                  │
+┌─────────────────▼─────────────────────────────────────────┐
+│ Layer 2: Filesystem & Network Scoping                     │
+│  • Workspace-only filesystem access                       │
+│  • Forbidden path enforcement                             │
+│  • Network isolation (Docker network=none)                │
+└─────────────────┬─────────────────────────────────────────┘
+                  │
+┌─────────────────▼─────────────────────────────────────────┐
+│ Layer 1: Input Validation & Secret Management             │
+│  • Parameter validation & sanitization                    │
+│  • Encrypted secret storage                               │
+│  • No secrets in logs or audit trails                     │
+└───────────────────────────────────────────────────────────┘
+```
+
+## Layer 5: Gateway Pairing
+
+The **Gateway** provides HTTP/WebSocket access to Corvus with mandatory authentication.
+
+### Pairing Flow
+
+1. **Startup** - Gateway generates a 6-digit pairing code
+2. **Display** - Code printed to terminal (not logged)
+3. **Client pairing** - Client sends `POST /pair` with code
+4. **Token generation** - Gateway returns bearer token
+5. **Authenticated requests** - Client includes token in `Authorization` header
+
+**Implementation:** `clients/agent-runtime/src/security/pairing.rs`
+
+```rust
+pub struct PairingGuard {
+    require_pairing: bool,
+    pairing_code: Mutex<Option<String>>,
+    paired_tokens: Mutex<HashSet<String>>,  // SHA-256 hashes
+    failed_attempts: Mutex<(u32, Option<Instant>)>,
+}
+```
+
+**Key features:**
+- **One-time pairing codes** - 6-digit numeric codes with CSPRNG
+- **Token hashing** - Tokens stored as SHA-256 hashes
+- **Brute-force protection** - 5 failed attempts → 5-minute lockout
+- **Constant-time comparison** - Timing attack resistant
+
+**Configuration:**
+
+```toml
+[gateway]
+enabled = true
+host = "127.0.0.1"      # Bind to localhost only
+port = 7777
+require_pairing = true  # Enforce pairing
+```
+
+<Warning>
+**Public Binding Warning**
+
+If binding to `0.0.0.0` or a public IP:
+- Pairing MUST be enabled
+- Gateway will refuse to start without pairing
+- Use firewall rules to restrict access
+</Warning>
+
+### Token Management
+
+**Token generation:**
+```rust
+fn generate_token() -> String {
+    let mut bytes = [0u8; 32];  // 256 bits of entropy
+    rand::rng().fill_bytes(&mut bytes);
+    format!("zc_{}", hex::encode(bytes))
+}
+```
+
+**Token storage:**
+```rust
+fn hash_token(token: &str) -> String {
+    format!("{:x}", Sha256::digest(token.as_bytes()))
+}
+```
+
+**Token validation:**
+```rust
+pub fn is_authenticated(&self, token: &str) -> bool {
+    let hashed = hash_token(token);
+    let tokens = self.paired_tokens.lock();
+    tokens.iter().fold(false, |acc, stored| {
+        let equal = constant_time_eq(stored, &hashed);
+        acc | equal  // Constant-time OR to prevent early exit
+    })
+}
+```
+
+## Layer 4: Security Policy
+
+The **SecurityPolicy** defines what agents are allowed to do.
+
+**Location:** `clients/agent-runtime/src/security/policy.rs`
+
+```rust
+pub struct SecurityPolicy {
+    pub autonomy: AutonomyLevel,
+    pub workspace_dir: PathBuf,
+    pub workspace_only: bool,
+    pub allowed_commands: Vec<String>,
+    pub forbidden_paths: Vec<String>,
+    pub max_actions_per_hour: u32,
+    pub max_cost_per_day_cents: u32,
+    pub require_approval_for_medium_risk: bool,
+    pub block_high_risk_commands: bool,
+    pub tracker: ActionTracker,
+}
+```
+
+### Autonomy Levels
+
+```rust
+pub enum AutonomyLevel {
+    ReadOnly,    // Observe but not act
+    Supervised,  // Act with approval for risky ops (default)
+    Full,        // Autonomous within policy bounds
+}
+```
+
+**Behavior:**
+
+| Operation | ReadOnly | Supervised | Full |
+|-----------|----------|------------|------|
+| Read files | ✅ | ✅ | ✅ |
+| Write files | ❌ | ⚠️ Approval | ✅ |
+| Shell (low risk) | ❌ | ✅ | ✅ |
+| Shell (medium risk) | ❌ | ⚠️ Approval | ✅ |
+| Shell (high risk) | ❌ | ❌ | ❌ |
+| Network access | ❌ | ⚠️ Approval | ✅ |
+
+### Command Allowlists
+
+Only explicitly allowed commands can execute:
+
+```toml
+[security]
+allowed_commands = [
+  "git", "npm", "cargo",
+  "ls", "cat", "grep", "find",
+  "echo", "pwd", "wc", "head", "tail"
+]
+```
+
+**Validation:**
+```rust
+fn is_command_allowed(&self, command: &str) -> bool {
+    let cmd = command.split_whitespace().next().unwrap_or("");
+    self.allowed_commands.iter().any(|allowed| {
+        cmd == allowed || cmd.ends_with(&format!("/{}", allowed))
+    })
+}
+```
+
+### Path Blocklists
+
+Critical paths are always forbidden:
+
+```rust
+forbidden_paths: vec![
+    // System directories
+    "/etc", "/root", "/home", "/usr", "/bin", "/sbin",
+    "/sys", "/proc", "/dev", "/boot", "/var",
+    // Sensitive files
+    "/etc/passwd", "/etc/shadow", "/etc/sudoers",
+    // SSH keys
+    "~/.ssh/id_rsa", "~/.ssh/id_ed25519",
+],
+```
+
+### Risk Assessment
+
+```rust
+pub fn assess_command_risk(command: &str) -> CommandRiskLevel {
+    let lower = command.to_lowercase();
+    
+    // High risk: destructive operations
+    if lower.contains("rm -rf") || lower.contains("dd if=")
+        || lower.contains("> /dev/") || lower.contains("mkfs")
+        || lower.contains(":(){ :|:& };:")  // Fork bomb
+    {
+        return CommandRiskLevel::High;
+    }
+    
+    // Medium risk: write operations
+    if lower.contains("curl") || lower.contains("wget")
+        || lower.contains("sudo") || lower.contains("chmod")
+        || lower.contains(">>") || lower.contains(">")
+    {
+        return CommandRiskLevel::Medium;
+    }
+    
+    // Low risk: read-only operations
+    CommandRiskLevel::Low
+}
+```
+
+### Rate Limiting
+
+**Action tracking:**
+```rust
+pub struct ActionTracker {
+    actions: Mutex<Vec<Instant>>,
+}
+
+impl ActionTracker {
+    pub fn record(&self) -> usize {
+        let mut actions = self.actions.lock();
+        let cutoff = Instant::now() - Duration::from_secs(3600);
+        actions.retain(|t| *t > cutoff);
+        actions.push(Instant::now());
+        actions.len()
+    }
+}
+```
+
+**Enforcement:**
+```rust
+if policy.tracker.count() >= policy.max_actions_per_hour {
+    anyhow::bail!("Rate limit exceeded: {} actions/hour", 
+                  policy.max_actions_per_hour);
+}
+```
+
+## Layer 3: Runtime Sandboxing
+
+See [Runtime Model](/runtime-model) for detailed sandbox information.
+
+**Docker isolation:**
+- Process namespace (`--pid`)
+- Network namespace (`--network none`)
+- Mount namespace (read-only rootfs)
+- Resource limits (`--memory`, `--cpus`)
+
+**Linux kernel sandboxing:**
+- **Landlock** - Filesystem access control
+- **Firejail** - Namespace isolation + seccomp
+- **Bubblewrap** - Lightweight containers
+
+## Layer 2: Filesystem Scoping
+
+### Workspace-Only Mode
+
+```toml
+[security]
+workspace_dir = "/path/to/project"
+workspace_only = true  # Restrict all operations to workspace
+```
+
+**Enforcement:**
+```rust
+fn validate_path(&self, path: &Path) -> anyhow::Result<()> {
+    let canonical = path.canonicalize()?;
+    
+    // Check workspace boundary
+    if self.workspace_only && !canonical.starts_with(&self.workspace_dir) {
+        anyhow::bail!("Path outside workspace: {}", path.display());
+    }
+    
+    // Check forbidden paths
+    for forbidden in &self.forbidden_paths {
+        if canonical.starts_with(forbidden) {
+            anyhow::bail!("Forbidden path: {}", path.display());
+        }
+    }
+    
+    Ok(())
+}
+```
+
+### Network Isolation
+
+**Docker:**
+```toml
+[runtime.docker]
+network = "none"  # Block all network access
+```
+
+**Native:**
+No built-in network isolation - rely on firewall rules.
+
+## Layer 1: Input Validation
+
+### Parameter Validation
+
+All tool inputs are validated against JSON schemas:
+
+```rust
+async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+    // Validate required fields
+    let path = args["path"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing 'path' parameter"))?;
+    
+    // Sanitize path
+    let path = PathBuf::from(path);
+    if path.to_string_lossy().contains("..") {
+        anyhow::bail!("Path traversal attempt detected");
+    }
+    
+    // Validate against policy
+    self.policy.validate_path(&path)?;
+    
+    // Execute operation
+    // ...
+}
+```
+
+### Secret Management
+
+Secrets are encrypted at rest using **XChaCha20-Poly1305**.
+
+**Location:** `clients/agent-runtime/src/security/secrets.rs`
+
+```rust
+pub struct SecretStore {
+    storage_dir: PathBuf,
+    cipher: XChaCha20Poly1305,
+}
+
+impl SecretStore {
+    pub fn encrypt(&self, plaintext: &str) -> anyhow::Result<String> {
+        let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+        let ciphertext = self.cipher.encrypt(&nonce, plaintext.as_bytes())?;
+        Ok(format!("{}:{}", hex::encode(nonce), hex::encode(ciphertext)))
+    }
+    
+    pub fn decrypt(&self, encrypted: &str) -> anyhow::Result<String> {
+        let parts: Vec<&str> = encrypted.split(':').collect();
+        let nonce = hex::decode(parts[0])?;
+        let ciphertext = hex::decode(parts[1])?;
+        let plaintext = self.cipher.decrypt(&nonce.into(), ciphertext.as_ref())?;
+        Ok(String::from_utf8(plaintext)?)
+    }
+}
+```
+
+**Usage:**
+```rust
+let store = SecretStore::new(config_dir, paranoid_mode);
+let encrypted = store.encrypt("sk-1234567890")?;
+config.api_key = encrypted;
+save_config(&config)?;
+```
+
+### Logging & Audit
+
+**NEVER log sensitive data:**
+
+```rust
+const SENSITIVE_MARKERS: [&str; 5] = [
+    "password", "token", "secret", "api_key", "auth"
+];
+
+pub fn redact_observer_payload(value: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    if SENSITIVE_MARKERS.iter().any(|m| lower.contains(m)) {
+        return "***REDACTED***".to_string();
+    }
+    value.to_string()
+}
+```
+
+**Audit logging:**
+```rust
+pub struct AuditEvent {
+    pub timestamp: String,
+    pub event_type: AuditEventType,
+    pub user: String,
+    pub component: String,
+    pub action: String,
+    pub outcome: String,
+    pub details: HashMap<String, String>,
+}
+```
+
+## Threat Model
+
+### Threats We Defend Against
+
+<AccordionGroup>
+  <Accordion title="Malicious Prompt Injection">
+    **Attack:** User tricks agent into executing harmful commands
+    
+    **Defense:**
+    - Command allowlists
+    - Risk assessment
+    - Approval workflows for risky operations
+    - Sandbox isolation
+  </Accordion>
+  
+  <Accordion title="Path Traversal">
+    **Attack:** Agent accesses files outside workspace
+    
+    **Defense:**
+    - Path canonicalization
+    - Workspace boundary checks
+    - Forbidden path enforcement
+    - Docker mount restrictions
+  </Accordion>
+  
+  <Accordion title="Command Injection">
+    **Attack:** Malicious shell metacharacters in parameters
+    
+    **Defense:**
+    - Input validation and sanitization
+    - No string concatenation for shell commands
+    - Use of `Command::arg()` (no shell parsing)
+    - Sandbox isolation
+  </Accordion>
+  
+  <Accordion title="Resource Exhaustion">
+    **Attack:** Agent consumes excessive CPU/memory/disk
+    
+    **Defense:**
+    - Docker resource limits
+    - Rate limiting (actions per hour)
+    - Execution timeouts
+    - Memory budgets
+  </Accordion>
+  
+  <Accordion title="Credential Theft">
+    **Attack:** Agent leaks API keys or secrets
+    
+    **Defense:**
+    - Encrypted secret storage
+    - No secrets in logs
+    - Redaction in observability
+    - Environment variable isolation
+  </Accordion>
+  
+  <Accordion title="Unauthorized Gateway Access">
+    **Attack:** Attacker sends requests to gateway
+    
+    **Defense:**
+    - Mandatory pairing on public bind
+    - Bearer token authentication
+    - Brute-force protection
+    - Rate limiting
+  </Accordion>
+  
+  <Accordion title="Container Escape">
+    **Attack:** Agent breaks out of Docker container
+    
+    **Defense:**
+    - No privileged containers
+    - Read-only root filesystem
+    - Minimal Linux capabilities
+    - No host mounts of sensitive paths
+  </Accordion>
+</AccordionGroup>
+
+### Threats We Don't Defend Against
+
+<Warning>**Out of Scope:**</Warning>
+- Physical access to host machine
+- Kernel exploits (rely on OS patches)
+- Side-channel attacks (timing, cache)
+- Social engineering of human operators
+- Supply chain attacks (use dependency scanning)
+
+## Security Checklist
+
+Before deploying Corvus to production:
+
+<Accordion title="Configuration">
+  <Check>Set `autonomy = "supervised"` (default)</Check>
+  <Check>Enable `require_pairing = true` for public gateway</Check>
+  <Check>Use Docker runtime for untrusted workloads</Check>
+  <Check>Enable `read_only_rootfs = true` in Docker config</Check>
+  <Check>Set `network = "none"` unless network access required</Check>
+  <Check>Configure resource limits (memory, CPU)</Check>
+  <Check>Set `workspace_only = true`</Check>
+  <Check>Review and minimize `allowed_commands`</Check>
+  <Check>Expand `forbidden_paths` for your environment</Check>
+</Accordion>
+
+<Accordion title="Network">
+  <Check>Bind gateway to `127.0.0.1` for localhost only</Check>
+  <Check>Use firewall rules to restrict public access</Check>
+  <Check>Enable TLS/HTTPS with valid certificates</Check>
+  <Check>Use a reverse proxy (nginx, Caddy) in production</Check>
+  <Check>Implement rate limiting at proxy level</Check>
+</Accordion>
+
+<Accordion title="Secrets">
+  <Check>Enable `paranoid_mode = true` for secret encryption</Check>
+  <Check>Store config files with restrictive permissions (600)</Check>
+  <Check>Use environment variables for sensitive config</Check>
+  <Check>Never commit secrets to version control</Check>
+  <Check>Rotate bearer tokens periodically</Check>
+</Accordion>
+
+<Accordion title="Monitoring">
+  <Check>Enable audit logging</Check>
+  <Check>Monitor failed authentication attempts</Check>
+  <Check>Alert on high-risk command executions</Check>
+  <Check>Track resource usage (CPU, memory)</Check>
+  <Check>Set up security event notifications</Check>
+</Accordion>
+
+<Accordion title="Operations">
+  <Check>Keep Corvus and dependencies updated</Check>
+  <Check>Run vulnerability scanning on Docker images</Check>
+  <Check>Review audit logs regularly</Check>
+  <Check>Test incident response procedures</Check>
+  <Check>Document security policies</Check>
+</Accordion>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Principle of Least Privilege" icon="lock">
+    Grant only the minimum permissions required. Start restrictive and relax as needed.
+  </Card>
+  <Card title="Defense in Depth" icon="layer-group">
+    Don't rely on a single security layer. Multiple boundaries increase resilience.
+  </Card>
+  <Card title="Secure by Default" icon="shield-check">
+    Default configuration should be secure. Require explicit opt-in for risky features.
+  </Card>
+  <Card title="Fail Securely" icon="ban">
+    On error, fail closed (deny access) not open (allow access).
+  </Card>
+</CardGroup>
+
+## Security Research
+
+We welcome responsible security research:
+
+<Info>
+**Report vulnerabilities to:** security@corvus.dev
+
+Please include:
+- Description of the vulnerability
+- Steps to reproduce
+- Potential impact
+- Suggested fix (if applicable)
+
+We aim to respond within 48 hours.
+</Info>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Runtime Model" icon="server" href="/runtime-model">
+    Understand sandboxing and isolation
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Configure security policies
+  </Card>
+  <Card title="Deployment Guide" icon="rocket" href="/guides/deployment">
+    Deploy securely to production
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    See how security fits into the system
+  </Card>
+</CardGroup>

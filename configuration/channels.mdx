@@ -1,0 +1,473 @@
+---
+title: Channel Configuration
+description: Configure messaging platform integrations for Telegram, Discord, Slack, WhatsApp, and more
+---
+
+## Overview
+
+Corvus supports **15+ messaging platforms** through a unified channel system. Each channel can be independently configured with authentication, allowlists, and platform-specific settings.
+
+## Supported Channels
+
+<CardGroup cols={3}>
+  <Card title="Telegram" icon="telegram">
+    Bot API with streaming support
+  </Card>
+  <Card title="Discord" icon="discord">
+    WebSocket gateway integration
+  </Card>
+  <Card title="Slack" icon="slack">
+    Socket Mode and webhook support
+  </Card>
+  <Card title="WhatsApp" icon="whatsapp">
+    Meta Business Cloud API
+  </Card>
+  <Card title="Matrix" icon="matrix">
+    Decentralized messaging
+  </Card>
+  <Card title="Signal" icon="signal">
+    signal-cli HTTP integration
+  </Card>
+  <Card title="iMessage" icon="apple">
+    macOS AppleScript integration
+  </Card>
+  <Card title="IRC" icon="hashtag">
+    Classic IRC with TLS
+  </Card>
+  <Card title="Email" icon="envelope">
+    IMAP/SMTP support
+  </Card>
+  <Card title="Lark/Feishu" icon="feather">
+    WebSocket & webhook modes
+  </Card>
+  <Card title="DingTalk" icon="comment">
+    Stream Mode integration
+  </Card>
+  <Card title="QQ" icon="qq">
+    Official Bot SDK
+  </Card>
+  <Card title="Mattermost" icon="message">
+    Self-hosted Slack alternative
+  </Card>
+  <Card title="Webhook" icon="webhook">
+    HTTP webhook endpoint
+  </Card>
+  <Card title="CLI" icon="terminal">
+    Command-line interface
+  </Card>
+</CardGroup>
+
+## Channel Security Model
+
+<Warning>
+  Empty allowlists **deny all inbound messages** by default. This prevents accidental exposure.
+</Warning>
+
+Allowlist behavior:
+
+- **Empty array `[]`**: Deny all inbound messages (secure by default)
+- **Wildcard `["*"]`**: Allow all senders (explicit opt-in)
+- **Specific IDs**: Exact-match allowlist (recommended)
+
+### Finding Your Identity
+
+If you're unsure which identity to allowlist:
+
+1. Start the channel with an empty allowlist
+2. Send a test message to your bot
+3. Check the logs for the unauthorized sender identity
+4. Add that value to `allowed_users` and rerun channel setup
+
+```bash
+corvus onboard --channels-only
+```
+
+## Telegram Configuration
+
+<Steps>
+  <Step title="Create a Bot">
+    Message [@BotFather](https://t.me/BotFather) on Telegram and create a new bot with `/newbot`.
+  </Step>
+  <Step title="Get Bot Token">
+    Copy the bot token provided by BotFather.
+  </Step>
+  <Step title="Configure Corvus">
+    Add to `config.toml`:
+
+    ```toml
+    [channels_config.telegram]
+    bot_token = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+    allowed_users = ["your_username"]  # Without @ symbol
+    stream_mode = "partial"  # or "off"
+    draft_update_interval_ms = 1000
+    ```
+  </Step>
+</Steps>
+
+### Configuration Fields
+
+<ParamField path="channels_config.telegram.bot_token" type="string" required>
+  Bot token from @BotFather.
+</ParamField>
+
+<ParamField path="channels_config.telegram.allowed_users" type="string[]" required>
+  List of allowed Telegram usernames (without `@`) or user IDs.
+  
+  **Examples:**
+  - Username: `["alice", "bob"]`
+  - User ID: `["123456789"]`
+  - Allow all: `["*"]`
+</ParamField>
+
+<ParamField path="channels_config.telegram.stream_mode" type="string" default="off">
+  Streaming mode for progressive response updates:
+  - `off`: Send complete response as single message (default)
+  - `partial`: Update draft message during generation
+</ParamField>
+
+<ParamField path="channels_config.telegram.draft_update_interval_ms" type="number" default={1000}>
+  Minimum interval between draft message edits (to avoid rate limits).
+</ParamField>
+
+## Discord Configuration
+
+<Steps>
+  <Step title="Create Application">
+    Go to [Discord Developer Portal](https://discord.com/developers/applications) and create a new application.
+  </Step>
+  <Step title="Create Bot">
+    Under "Bot", click "Add Bot" and enable:
+    - Message Content Intent
+    - Server Members Intent (optional)
+  </Step>
+  <Step title="Get Bot Token">
+    Copy the bot token from the Bot settings page.
+  </Step>
+  <Step title="Invite Bot">
+    Under "OAuth2" → "URL Generator", select:
+    - Scopes: `bot`
+    - Permissions: `Send Messages`, `Read Message History`
+    
+    Open the generated URL to invite the bot to your server.
+  </Step>
+  <Step title="Configure Corvus">
+    ```toml
+    [channels_config.discord]
+    bot_token = "MTk4NjIyNDgzNDcxOTI1MjQ4.XXXXXX.XXXXXX"
+    guild_id = "123456789012345678"  # Optional: server ID
+    allowed_users = ["987654321098765432"]  # Discord user IDs
+    listen_to_bots = false  # Ignore other bots
+    mention_only = false  # Respond to all messages or @mentions only
+    ```
+  </Step>
+</Steps>
+
+### Configuration Fields
+
+<ParamField path="channels_config.discord.bot_token" type="string" required>
+  Bot token from Discord Developer Portal.
+</ParamField>
+
+<ParamField path="channels_config.discord.guild_id" type="string" optional>
+  Server (guild) ID to restrict bot to. Leave empty for all servers.
+</ParamField>
+
+<ParamField path="channels_config.discord.allowed_users" type="string[]" required>
+  List of allowed Discord user IDs (numeric).
+</ParamField>
+
+<ParamField path="channels_config.discord.listen_to_bots" type="boolean" default={false}>
+  Process messages from other bots (always ignores own messages).
+</ParamField>
+
+<ParamField path="channels_config.discord.mention_only" type="boolean" default={false}>
+  Only respond to messages that @mention the bot.
+</ParamField>
+
+## Slack Configuration
+
+<Steps>
+  <Step title="Create Slack App">
+    Go to [Slack API](https://api.slack.com/apps) and create a new app.
+  </Step>
+  <Step title="Enable Socket Mode">
+    Under "Socket Mode", enable Socket Mode and generate an app-level token.
+  </Step>
+  <Step title="Add Bot Scopes">
+    Under "OAuth & Permissions", add bot token scopes:
+    - `chat:write`
+    - `channels:history`
+    - `groups:history`
+    - `im:history`
+  </Step>
+  <Step title="Install to Workspace">
+    Install the app to your workspace and copy the Bot User OAuth Token.
+  </Step>
+  <Step title="Configure Corvus">
+    ```toml
+    [channels_config.slack]
+    bot_token = "xoxb-..."
+    app_token = "xapp-..."  # For Socket Mode
+    channel_id = "C01234567"  # Optional: specific channel
+    allowed_users = ["U01234567"]  # Slack member IDs
+    ```
+  </Step>
+</Steps>
+
+### Configuration Fields
+
+<ParamField path="channels_config.slack.bot_token" type="string" required>
+  Bot User OAuth Token (starts with `xoxb-`).
+</ParamField>
+
+<ParamField path="channels_config.slack.app_token" type="string" optional>
+  App-level token for Socket Mode (starts with `xapp-`).
+</ParamField>
+
+<ParamField path="channels_config.slack.channel_id" type="string" optional>
+  Specific channel ID to monitor. Leave empty for all channels.
+</ParamField>
+
+<ParamField path="channels_config.slack.allowed_users" type="string[]" required>
+  List of allowed Slack member IDs (starts with `U`).
+</ParamField>
+
+## WhatsApp Configuration
+
+<Warning>
+  WhatsApp requires HTTPS webhook endpoint. Use a tunnel (ngrok, Cloudflare, Tailscale) for local development.
+</Warning>
+
+<Steps>
+  <Step title="Create Meta Business App">
+    Go to [Meta for Developers](https://developers.facebook.com/) and create a Business app.
+  </Step>
+  <Step title="Add WhatsApp Product">
+    Add "WhatsApp" product to your app.
+  </Step>
+  <Step title="Get Credentials">
+    From WhatsApp → API Setup:
+    - Copy Access Token
+    - Copy Phone Number ID
+    - Define a Verify Token (any random string)
+  </Step>
+  <Step title="Configure Corvus">
+    ```toml
+    [channels_config.whatsapp]
+    access_token = "EAABx..."
+    phone_number_id = "123456789012345"
+    verify_token = "my-secret-verify-token"
+    app_secret = "app-secret-from-meta"  # For signature verification
+    allowed_numbers = ["+1234567890"]  # E.164 format
+    ```
+  </Step>
+  <Step title="Start Gateway with Tunnel">
+    ```bash
+    corvus gateway --port 8080
+    ```
+    
+    Set up a tunnel to expose the gateway:
+    ```bash
+    ngrok http 8080
+    ```
+  </Step>
+  <Step title="Configure Webhook">
+    In Meta Developer Console → WhatsApp → Configuration:
+    - Callback URL: `https://your-tunnel-url/whatsapp`
+    - Verify Token: Same as `verify_token` in config
+    - Subscribe to: `messages`
+  </Step>
+</Steps>
+
+### Configuration Fields
+
+<ParamField path="channels_config.whatsapp.access_token" type="string" required>
+  Access token from Meta Business Suite.
+</ParamField>
+
+<ParamField path="channels_config.whatsapp.phone_number_id" type="string" required>
+  Phone number ID from WhatsApp API Setup.
+</ParamField>
+
+<ParamField path="channels_config.whatsapp.verify_token" type="string" required>
+  Webhook verification token (you define this).
+</ParamField>
+
+<ParamField path="channels_config.whatsapp.app_secret" type="string" optional>
+  App secret for webhook signature verification. Can also be set via `CORVUS_WHATSAPP_APP_SECRET`.
+</ParamField>
+
+<ParamField path="channels_config.whatsapp.allowed_numbers" type="string[]" required>
+  Allowed phone numbers in E.164 format (e.g., `+1234567890`).
+  
+  Use `["*"]` to allow all numbers.
+</ParamField>
+
+## Signal Configuration
+
+Requires [signal-cli](https://github.com/AsamK/signal-cli) running in HTTP daemon mode.
+
+```toml
+[channels_config.signal]
+http_url = "http://127.0.0.1:8686"
+account = "+1234567890"  # Your signal-cli number
+group_id = "dm"  # "dm" for DMs only, or specific group ID
+allowed_from = ["+9876543210"]
+ignore_attachments = false
+ignore_stories = true
+```
+
+<ParamField path="channels_config.signal.http_url" type="string" required>
+  URL of signal-cli HTTP daemon.
+</ParamField>
+
+<ParamField path="channels_config.signal.account" type="string" required>
+  E.164 phone number of signal-cli account.
+</ParamField>
+
+<ParamField path="channels_config.signal.group_id" type="string" optional>
+  Filter messages by group:
+  - Omit: Accept all messages (DMs and groups)
+  - `"dm"`: Only accept direct messages
+  - Group ID: Only accept messages from specific group
+</ParamField>
+
+<ParamField path="channels_config.signal.allowed_from" type="string[]" required>
+  Allowed sender phone numbers in E.164 format.
+</ParamField>
+
+## Lark/Feishu Configuration
+
+Lark (international) and Feishu (China) support two receive modes:
+
+```toml
+[channels_config.lark]
+app_id = "cli_..."
+app_secret = "..."
+allowed_users = ["ou_..."]  # User IDs or union IDs
+use_feishu = false  # true for Feishu (China)
+receive_mode = "websocket"  # or "webhook"
+
+# Only for webhook mode:
+port = 8080
+encrypt_key = "..."  # Optional
+verification_token = "..."  # Optional
+```
+
+<ParamField path="channels_config.lark.receive_mode" type="string" default="websocket">
+  Event receive mode:
+  - `websocket`: Persistent connection, no public URL required (recommended)
+  - `webhook`: HTTP callback, requires public HTTPS endpoint
+</ParamField>
+
+<ParamField path="channels_config.lark.use_feishu" type="boolean" default={false}>
+  Use Feishu (China) endpoint instead of Lark (international).
+</ParamField>
+
+## IRC Configuration
+
+```toml
+[channels_config.irc]
+server = "irc.libera.chat"
+port = 6697
+nickname = "corvus-bot"
+channels = ["#rust", "#ai"]
+allowed_users = ["alice", "bob"]  # Case-insensitive
+
+# Authentication (choose one)
+server_password = "..."  # For bouncers like ZNC
+nickserv_password = "..."  # For NickServ IDENTIFY
+sasl_password = "..."  # For SASL PLAIN (IRCv3)
+
+verify_tls = true  # Verify TLS certificate
+```
+
+## Email Configuration
+
+```toml
+[channels_config.email]
+imap_host = "imap.gmail.com"
+imap_port = 993
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+email = "bot@example.com"
+password = "app-password"
+allowed_from = ["user@example.com"]
+```
+
+## Webhook Configuration
+
+Generic HTTP webhook endpoint:
+
+```toml
+[channels_config.webhook]
+port = 3000
+secret = "webhook-secret-token"  # Optional HMAC verification
+```
+
+**Usage:**
+
+```bash
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <pairing-token>" \
+  -d '{"message": "Hello, Corvus!"}'
+```
+
+## Channel Health Checks
+
+Check the health of configured channels:
+
+```bash
+corvus channel doctor
+```
+
+This validates:
+- Authentication credentials
+- Network connectivity
+- API endpoint availability
+- Webhook configuration
+
+## Quick Reconfiguration
+
+To reconfigure channels without affecting other settings:
+
+```bash
+corvus onboard --channels-only
+```
+
+This updates channel configuration and allowlists while preserving provider, memory, and security settings.
+
+## Complete Example
+
+```toml
+[channels_config]
+cli = true
+
+[channels_config.telegram]
+bot_token = "123456789:ABCdef..."
+allowed_users = ["alice"]
+stream_mode = "partial"
+
+[channels_config.discord]
+bot_token = "MTk4NjIy..."
+allowed_users = ["123456789012345678"]
+mention_only = true
+
+[channels_config.slack]
+bot_token = "xoxb-..."
+app_token = "xapp-..."
+allowed_users = ["U01234567"]
+
+[channels_config.whatsapp]
+access_token = "EAABx..."
+phone_number_id = "123456789012345"
+verify_token = "my-secret"
+allowed_numbers = ["+1234567890"]
+```
+
+## Next Steps
+
+<Card title="Memory Configuration" icon="brain" href="/configuration/memory">
+  Configure memory backends and embedding providers
+</Card>

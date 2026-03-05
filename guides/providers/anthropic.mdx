@@ -1,0 +1,455 @@
+---
+title: Anthropic Provider
+description: Configure and use Claude models (Sonnet, Opus, Haiku) in Corvus with prompt caching
+---
+
+The Anthropic provider enables access to Claude models through the official Anthropic API with automatic prompt caching and OAuth support.
+
+## Implementation Details
+
+Source: `~/workspace/source/clients/agent-runtime/src/providers/anthropic.rs:10`
+
+The Anthropic provider implements:
+- ✅ Native tool calling with `input_schema`
+- ✅ Streaming responses
+- ✅ **Automatic prompt caching** for system prompts and tools
+- ✅ OAuth setup token support (setup-tokens)
+- ✅ Multi-turn conversations
+- ✅ Connection warmup
+
+## Configuration
+
+### Basic Setup
+
+In `~/.config/corvus/config.toml`:
+
+```toml
+[runtime]
+provider = "anthropic"
+model = "claude-3-5-sonnet-20241022"
+temperature = 0.7
+```
+
+### API Key Setup
+
+Anthropic supports two authentication methods:
+
+#### Method 1: API Key (Standard)
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-api..."
+```
+
+#### Method 2: OAuth Setup Token
+
+```bash
+export ANTHROPIC_OAUTH_TOKEN="sk-ant-oat01-..."
+```
+
+**Credential resolution order** (from `~/workspace/source/clients/agent-runtime/src/providers/mod.rs:328`):
+
+1. Explicit `api_key` parameter (trimmed)
+2. `ANTHROPIC_OAUTH_TOKEN` environment variable (setup-tokens)
+3. `ANTHROPIC_API_KEY` environment variable (regular API keys)
+4. `CORVUS_API_KEY` fallback
+5. `API_KEY` fallback
+
+**Authentication detection** (from `~/workspace/source/clients/agent-runtime/src/providers/anthropic.rs:172`):
+
+```rust
+fn is_setup_token(token: &str) -> bool {
+    token.starts_with("sk-ant-oat01-")
+}
+```
+
+- Setup tokens use `Authorization: Bearer` header + `anthropic-beta: oauth-2025-04-20`
+- Regular API keys use `x-api-key` header
+
+## Supported Models
+
+### Claude 3.5 Series (Latest)
+
+```toml
+model = "claude-3-5-sonnet-20241022"  # Latest, best balanced
+model = "claude-3-5-haiku-20241022"   # Fast, cost-effective
+```
+
+**Claude 3.5 Sonnet:**
+- 200K context window
+- Superior reasoning and coding
+- Extended thinking capability
+- ~$3/M input, ~$15/M output tokens
+
+**Claude 3.5 Haiku:**
+- 200K context window
+- 3x faster than Sonnet
+- ~$0.80/M input, ~$4/M output tokens
+
+### Claude 3 Series
+
+```toml
+model = "claude-3-opus-20240229"     # Most capable (legacy)
+model = "claude-3-sonnet-20240229"   # Balanced (legacy)
+model = "claude-3-haiku-20240307"    # Fast (legacy)
+```
+
+**Note:** Claude 3.5 models are generally better than Claude 3 Opus for most tasks.
+
+## Prompt Caching
+
+Anthropic's prompt caching reduces costs by ~90% for repeated content. Corvus implements **automatic caching** based on heuristics:
+
+### Automatic Caching Rules
+
+From `~/workspace/source/clients/agent-runtime/src/providers/anthropic.rs:190-198`:
+
+```rust
+/// Cache system prompts larger than ~1024 tokens (3KB of text)
+fn should_cache_system(text: &str) -> bool {
+    text.len() > 3072
+}
+
+/// Cache conversations with more than 4 messages (excluding system)
+fn should_cache_conversation(messages: &[ChatMessage]) -> bool {
+    messages.iter().filter(|m| m.role != "system").count() > 4
+}
+```
+
+**What gets cached:**
+
+1. **System prompts > 3KB** (automatically cached)
+2. **Last message** in conversations > 4 messages
+3. **Last tool definition** (caches entire tool set)
+
+### Cache Control Format
+
+Corvus uses the `ephemeral` cache type:
+
+```rust
+{
+    "type": "text",
+    "text": "Your system prompt...",
+    "cache_control": {"type": "ephemeral"}
+}
+```
+
+### Caching Benefits
+
+| Scenario | Without Cache | With Cache | Savings |
+|----------|---------------|------------|----------|
+| Large system prompt (10K tokens) | $0.03 | $0.003 | 90% |
+| Long conversation (50 messages) | $0.15 | $0.015 | 90% |
+| Tool definitions (20 tools) | $0.02 | $0.002 | 90% |
+
+## Usage Examples
+
+### Simple Chat
+
+```rust
+use corvus_runtime::providers::create_provider;
+
+let provider = create_provider("anthropic", None)?;
+
+let response = provider
+    .simple_chat("Explain Rust lifetimes", "claude-3-5-sonnet-20241022", 0.7)
+    .await?;
+
+println!("Response: {}", response);
+```
+
+### Chat with System Prompt (Cached Automatically)
+
+```rust
+// Large system prompt (> 3KB) is automatically cached
+let system_prompt = format!(
+    "You are an expert Rust developer.\n\n{}",
+    "Context: ".repeat(1000)  // Make it > 3KB
+);
+
+let response = provider
+    .chat_with_system(
+        Some(&system_prompt),
+        "Write a function to parse JSON",
+        "claude-3-5-sonnet-20241022",
+        0.7,
+    )
+    .await?;
+```
+
+### Multi-turn Conversation (Auto-cached after 4 messages)
+
+```rust
+use corvus_runtime::providers::traits::ChatMessage;
+
+let messages = vec![
+    ChatMessage::system("You are a helpful coding assistant"),
+    ChatMessage::user("Write a binary search"),
+    ChatMessage::assistant("Here's an implementation..."),
+    ChatMessage::user("Add bounds checking"),
+    ChatMessage::assistant("Updated with bounds..."),
+    ChatMessage::user("Now make it generic"),  // Last message auto-cached
+];
+
+let response = provider
+    .chat_with_history(&messages, "claude-3-5-sonnet-20241022", 0.7)
+    .await?;
+```
+
+### Tool Calling with Auto-cached Tool Definitions
+
+```rust
+use corvus_runtime::providers::traits::{ChatRequest, ChatMessage};
+use corvus_runtime::tools::ToolSpec;
+
+// Define multiple tools (last tool definition gets cache_control)
+let tools = vec![
+    ToolSpec {
+        name: "read_file".to_string(),
+        description: "Read file contents".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"}
+            },
+            "required": ["path"]
+        }),
+        source: None,
+    },
+    ToolSpec {
+        name: "write_file".to_string(),
+        description: "Write file contents".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "content": {"type": "string"}
+            },
+            "required": ["path", "content"]
+        }),
+        source: None,
+    },
+    // Last tool gets cache_control, caching entire tool set
+];
+
+let request = ChatRequest {
+    messages: &[
+        ChatMessage::user("Read README.md and fix typos")
+    ],
+    tools: Some(&tools),
+};
+
+let response = provider
+    .chat(request, "claude-3-5-sonnet-20241022", 0.7)
+    .await?;
+
+if response.has_tool_calls() {
+    for call in response.tool_calls {
+        println!("Tool: {}, Args: {}", call.name, call.arguments);
+    }
+}
+```
+
+### Custom Base URL (For Proxies)
+
+```rust
+use corvus_runtime::providers::anthropic::AnthropicProvider;
+
+let provider = AnthropicProvider::with_base_url(
+    Some("sk-ant-api..."),
+    Some("https://proxy.example.com"),
+);
+```
+
+## Advanced Configuration
+
+### Connection Warmup
+
+Reduce first-request latency:
+
+```rust
+let provider = create_provider("anthropic", None)?;
+
+// Warm up HTTP/2 connection
+provider.warmup().await?;
+
+// First request is now faster
+let response = provider
+    .simple_chat("Hello", "claude-3-5-sonnet-20241022", 0.7)
+    .await?;
+```
+
+### Custom Timeouts
+
+Defaults from `~/workspace/source/clients/agent-runtime/src/providers/anthropic.rs:164`:
+- Request timeout: 120 seconds
+- Connect timeout: 10 seconds
+
+### With Resilient Provider Chain
+
+```toml
+[runtime]
+provider = "anthropic"
+
+[runtime.reliability]
+fallback_providers = ["openai", "openrouter"]
+provider_retries = 3
+provider_backoff_ms = 1000
+```
+
+## Response Format
+
+Anthropic's response structure:
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Response content"
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_123",
+      "name": "read_file",
+      "input": {"path": "README.md"}
+    }
+  ]
+}
+```
+
+Corvus automatically parses this into `ChatResponse`:
+
+```rust
+pub struct ChatResponse {
+    pub text: Option<String>,        // Combined text blocks
+    pub tool_calls: Vec<ToolCall>,   // Parsed tool_use blocks
+}
+```
+
+## Error Handling
+
+Common errors and solutions:
+
+### Missing Credentials
+
+```
+Error: Anthropic credentials not set. Set ANTHROPIC_API_KEY or ANTHROPIC_OAUTH_TOKEN (setup-token).
+```
+
+**Solution:** Set one of the environment variables.
+
+### Rate Limiting
+
+```
+Error: Anthropic API error (429): rate_limit_error
+```
+
+**Solution:**
+- Use prompt caching to reduce token usage
+- Implement exponential backoff (automatic with `create_resilient_provider`)
+- Upgrade to higher rate limits
+
+### Invalid Model
+
+```
+Error: Anthropic API error (400): invalid_model
+```
+
+**Solution:** Use a valid Claude model name with date suffix.
+
+### Token Limit Exceeded
+
+```
+Error: Anthropic API error (400): max_tokens_exceeded
+```
+
+**Solution:**
+- Reduce conversation history
+- Use prompt caching to reduce effective token count
+- Claude models have 200K context windows
+
+## Best Practices
+
+1. **Use Claude 3.5 Sonnet** for best overall performance
+2. **Use Claude 3.5 Haiku** for cost-effective, fast responses
+3. **Let automatic caching work** - structure prompts to exceed 3KB for system prompts
+4. **Keep conversations long** (>4 messages) to trigger message caching
+5. **Use environment variables** for credentials, never hardcode
+6. **Call `warmup()`** during initialization
+7. **Set appropriate temperature:**
+   - `0.0-0.3` for factual/deterministic
+   - `0.7` (default) for balanced
+   - `1.0+` for creative
+8. **Enable fallback providers** for production
+9. **Monitor cache hit rates** in Anthropic console
+10. **Use tool calling** for structured workflows
+
+## Cost Optimization
+
+### Model Selection
+
+| Model | Input (per 1M tokens) | Output (per 1M tokens) | Cached Input | Use Case |
+|-------|----------------------|------------------------|--------------|----------|
+| claude-3-5-sonnet | $3.00 | $15.00 | $0.30 (90% off) | General-purpose, best |
+| claude-3-5-haiku | $0.80 | $4.00 | $0.08 (90% off) | High-volume, fast |
+| claude-3-opus | $15.00 | $75.00 | $1.50 (90% off) | Complex reasoning |
+| claude-3-sonnet | $3.00 | $15.00 | $0.30 (90% off) | Legacy balanced |
+| claude-3-haiku | $0.25 | $1.25 | $0.03 (90% off) | Legacy fast |
+
+### Caching Tips
+
+1. **Structure system prompts to exceed 3KB** for automatic caching
+2. **Place static content first** in system prompts
+3. **Define all tools upfront** (last tool gets cached)
+4. **Keep conversations going** to leverage message caching
+5. **Monitor cache metrics** in Anthropic dashboard
+
+### Cost Comparison Example
+
+**Scenario:** 100 requests with 10KB system prompt
+
+| Without Caching | With Caching | Savings |
+|-----------------|--------------|----------|
+| $30.00 | $3.03 | **$26.97 (90%)** |
+
+## Troubleshooting
+
+### Test API Connectivity
+
+```bash
+curl https://api.anthropic.com/v1/messages \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+### Verify Configuration
+
+```bash
+corvus config show
+```
+
+### Enable Debug Logging
+
+```bash
+export RUST_LOG=corvus_runtime::providers=debug
+corvus run
+```
+
+### Check Cache Performance
+
+View cache hit rates in the [Anthropic Console](https://console.anthropic.com) under Usage.
+
+## See Also
+
+- [Provider Overview](/guides/providers/overview)
+- [OpenAI Provider](/guides/providers/openai)
+- [Custom Provider Setup](/guides/providers/custom)
+- [Tool Calling Guide](/guides/tools/overview)
+- [Anthropic Prompt Caching Docs](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
+- [Configuration Reference](/reference/configuration)

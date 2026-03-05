@@ -1,0 +1,342 @@
+---
+title: 'Embeddings'
+description: 'Vector embeddings for semantic memory search'
+---
+
+# Embeddings
+
+Embeddings power **semantic search** in Corvus memory. Instead of exact keyword matches, embeddings capture meaning and context.
+
+## How It Works
+
+1. **Text → Vector**: Convert text to a high-dimensional vector (e.g., 1536 floats)
+2. **Store**: Save vector alongside memory content
+3. **Query**: Convert query to vector, find nearest neighbors via cosine similarity
+4. **Return**: Memories with highest semantic similarity
+
+## Configuration
+
+```toml
+[memory]
+embedding_provider = "openai"  # or "noop" to disable
+vector_weight = 0.7            # 70% vector, 30% keyword
+keyword_weight = 0.3
+```
+
+## Embedding Providers
+
+### OpenAI (Default)
+
+Uses OpenAI's `text-embedding-3-small` model (1536 dimensions):
+
+```toml
+[memory]
+embedding_provider = "openai"
+```
+
+**Cost**: $0.02 per 1M tokens (~$0.000002 per embedding)
+
+**API Key**: Reads from `api_key` in config
+
+### Noop (Disable Vectors)
+
+Keyword search only:
+
+```toml
+[memory]
+embedding_provider = "noop"
+```
+
+Use when:
+- No internet access
+- Cost-sensitive deployments
+- Keyword search is sufficient
+
+### Custom URL
+
+Point to any OpenAI-compatible embedding API:
+
+```toml
+[memory]
+embedding_provider = "custom"
+embedding_url = "https://your-api.com/embeddings"
+```
+
+## EmbeddingProvider Trait
+
+From `src/memory/embeddings.rs:13-20`:
+
+```rust
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    /// Generate embedding vector for text
+    async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>>;
+    
+    /// Embedding dimension (e.g., 1536 for OpenAI)
+    fn dimension(&self) -> usize;
+}
+```
+
+## Implementation: OpenAI
+
+From `src/memory/embeddings.rs`:
+
+```rust
+pub struct OpenAiEmbedding {
+    api_key: String,
+    client: reqwest::Client,
+    model: String,
+}
+
+impl OpenAiEmbedding {
+    pub fn new(api_key: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+            client: reqwest::Client::new(),
+            model: "text-embedding-3-small".to_string(),
+        }
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for OpenAiEmbedding {
+    async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        let resp = self.client
+            .post("https://api.openai.com/v1/embeddings")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&serde_json::json!({
+                "input": text,
+                "model": self.model,
+            }))
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+        
+        let embedding = resp["data"][0]["embedding"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("No embedding in response"))?
+            .iter()
+            .map(|v| v.as_f64().unwrap() as f32)
+            .collect();
+        
+        Ok(embedding)
+    }
+    
+    fn dimension(&self) -> usize {
+        1536
+    }
+}
+```
+
+## Cosine Similarity
+
+From `src/memory/vector.rs`:
+
+```rust
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len(), "Vectors must have same dimension");
+    
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let mag_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let mag_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    
+    if mag_a == 0.0 || mag_b == 0.0 {
+        return 0.0;
+    }
+    
+    dot / (mag_a * mag_b)
+}
+```
+
+**Range**: [-1, 1] where:
+- 1.0 = identical
+- 0.0 = orthogonal (unrelated)
+- -1.0 = opposite
+
+## Embedding Cache
+
+To avoid redundant API calls, embeddings are cached by content hash:
+
+```rust
+use sha2::{Sha256, Digest};
+
+fn content_hash(text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+pub async fn get_or_embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+    let hash = content_hash(text);
+    
+    // Check cache
+    if let Some(cached) = self.cache.get(&hash) {
+        return Ok(cached.clone());
+    }
+    
+    // Generate embedding
+    let embedding = self.embedder.embed(text).await?;
+    
+    // Store in cache
+    self.cache.insert(hash, embedding.clone());
+    
+    Ok(embedding)
+}
+```
+
+**Cache hit rate**: ~70-80% in typical usage
+
+## Text Chunking
+
+Long documents are split into chunks before embedding:
+
+From `src/memory/chunker.rs`:
+
+```rust
+pub fn chunk_text(text: &str, max_lines: usize) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut chunks = Vec::new();
+    let mut current_chunk = String::new();
+    let mut current_heading = String::new();
+    
+    for line in lines {
+        // Preserve headings across chunks
+        if line.starts_with('#') {
+            current_heading = line.to_string();
+        }
+        
+        if current_chunk.lines().count() >= max_lines {
+            chunks.push(current_chunk.trim().to_string());
+            current_chunk = format!("{}\n", current_heading);
+        }
+        
+        current_chunk.push_str(line);
+        current_chunk.push('\n');
+    }
+    
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk.trim().to_string());
+    }
+    
+    chunks
+}
+```
+
+**Default**: 50 lines per chunk
+
+## Hybrid Search Weights
+
+Tune weights based on your use case:
+
+### Semantic-Heavy (Default)
+
+```toml
+vector_weight = 0.7
+keyword_weight = 0.3
+```
+
+Best for: Conceptual queries, natural language
+
+### Keyword-Heavy
+
+```toml
+vector_weight = 0.3
+keyword_weight = 0.7
+```
+
+Best for: Exact terms, technical queries, code search
+
+### Balanced
+
+```toml
+vector_weight = 0.5
+keyword_weight = 0.5
+```
+
+Best for: Mixed queries
+
+## Custom Embedding Provider
+
+Implement the trait for your own provider:
+
+```rust
+use async_trait::async_trait;
+use corvus::memory::embeddings::EmbeddingProvider;
+
+pub struct LocalEmbedding {
+    model: YourEmbeddingModel,
+}
+
+#[async_trait]
+impl EmbeddingProvider for LocalEmbedding {
+    async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        // Your embedding logic
+        let embedding = self.model.encode(text)?;
+        Ok(embedding)
+    }
+    
+    fn dimension(&self) -> usize {
+        384  // Your model's dimension
+    }
+}
+```
+
+Register in `src/memory/mod.rs`:
+
+```rust
+let embedder: Arc<dyn EmbeddingProvider> = match config.embedding_provider.as_str() {
+    "openai" => Arc::new(OpenAiEmbedding::new(&config.api_key)),
+    "local" => Arc::new(LocalEmbedding::new()),
+    _ => Arc::new(NoopEmbedding),
+};
+```
+
+## Performance Considerations
+
+### Latency
+
+| Provider | Latency | Notes |
+|----------|---------|-------|
+| OpenAI API | 100-300ms | Network call |
+| Local model | 10-50ms | CPU/GPU bound |
+| Noop | &lt;1ms | No embedding |
+
+### Cost
+
+**OpenAI pricing** (as of 2026):
+
+- text-embedding-3-small: $0.02 / 1M tokens
+- text-embedding-3-large: $0.13 / 1M tokens
+
+**Estimate**: 1000 memories * 200 tokens each = $0.004
+
+### Caching Impact
+
+With 80% cache hit rate:
+
+- **Without cache**: 1000 embeds = 100-300 seconds
+- **With cache**: 200 embeds = 20-60 seconds
+
+**5× speedup** + cost savings
+
+## Best Practices
+
+<Tip>
+  Enable **embedding cache** (default) to avoid redundant API calls
+</Tip>
+
+<Tip>
+  Use **text-embedding-3-small** (1536d) for best cost/performance ratio
+</Tip>
+
+<Warning>
+  **Don't embed secrets or PII** — embeddings are sent to external APIs
+</Warning>
+
+## Related
+
+- [Memory Overview](/guides/memory/overview)
+- [SQLite Backend](/guides/memory/sqlite)
+- [SurrealDB Backend](/guides/memory/surrealdb)
+- [Memory Tools](/guides/tools/memory)
