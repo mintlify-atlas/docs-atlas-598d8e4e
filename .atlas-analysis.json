@@ -1,0 +1,115 @@
+{
+  "projectType": "framework",
+  "projectName": "Corvus",
+  "projectDescription": "Fast, lightweight, and fully autonomous AI agent framework with pluggable architecture and secure sandboxing",
+  "theme": "aspen",
+  "primaryColor": "#ffffff",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": ["introduction", "quickstart", "installation"]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": ["architecture", "trait-system", "runtime-model", "security-model"]
+          },
+          {
+            "group": "Configuration",
+            "pages": ["configuration/overview", "configuration/providers", "configuration/channels", "configuration/memory", "configuration/security"]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "AI Providers",
+            "pages": ["guides/providers/overview", "guides/providers/openai", "guides/providers/anthropic", "guides/providers/custom"]
+          },
+          {
+            "group": "Channels",
+            "pages": ["guides/channels/overview", "guides/channels/telegram", "guides/channels/discord", "guides/channels/whatsapp", "guides/channels/cli"]
+          },
+          {
+            "group": "Tools & Capabilities",
+            "pages": ["guides/tools/overview", "guides/tools/shell", "guides/tools/file-operations", "guides/tools/memory", "guides/tools/browser"]
+          },
+          {
+            "group": "Memory & Storage",
+            "pages": ["guides/memory/overview", "guides/memory/sqlite", "guides/memory/surrealdb", "guides/memory/embeddings"]
+          },
+          {
+            "group": "Security & Deployment",
+            "pages": ["guides/security/overview", "guides/security/sandbox", "guides/security/gateway", "guides/deployment"]
+          },
+          {
+            "group": "Advanced",
+            "pages": ["guides/identity/aieos", "guides/observability", "guides/troubleshooting"]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Traits",
+            "pages": ["api/traits/provider", "api/traits/channel", "api/traits/tool", "api/traits/memory", "api/traits/runtime"]
+          },
+          {
+            "group": "CLI",
+            "pages": ["api/cli/commands", "api/cli/agent", "api/cli/gateway", "api/cli/daemon"]
+          },
+          {
+            "group": "Configuration",
+            "pages": ["api/config/schema", "api/config/environment"]
+          }
+        ]
+      },
+      {
+        "tab": "Extend",
+        "groups": [
+          {
+            "group": "Building Extensions",
+            "pages": ["extend/overview", "extend/custom-provider", "extend/custom-channel", "extend/custom-tool", "extend/custom-memory"]
+          },
+          {
+            "group": "Examples",
+            "pages": ["extend/examples/provider", "extend/examples/channel", "extend/examples/tool"]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Trait-based pluggable architecture for all subsystems",
+    "22+ AI provider integrations with custom endpoint support",
+    "8+ messaging channel integrations (Telegram, Discord, WhatsApp, etc.)",
+    "Hybrid memory system with vector + keyword search",
+    "Secure sandbox execution with Docker and native runtimes",
+    "AIEOS v1.1 identity standard support",
+    "Ultra-lightweight Rust runtime (<5MB, <10ms startup)",
+    "Autonomous daemon mode for long-running workflows"
+  ],
+  "publicApiSurface": [
+    "Provider trait - AI model provider interface",
+    "Channel trait - Messaging platform interface",
+    "Tool trait - Agent capability interface",
+    "Memory trait - Storage backend interface",
+    "RuntimeAdapter trait - Execution environment interface",
+    "Observer trait - Observability interface",
+    "SecurityPolicy - Security and access control",
+    "IdentityConfig - Agent identity configuration",
+    "corvus agent - Interactive chat command",
+    "corvus gateway - Webhook server command",
+    "corvus daemon - Autonomous runtime command",
+    "corvus onboard - Setup wizard command",
+    "corvus service - Background service management",
+    "corvus doctor - System diagnostics command"
+  ]
+}
